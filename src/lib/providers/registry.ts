@@ -54,6 +54,15 @@ export function providerStatuses(env: Record<string, string | undefined> = proce
         "Free, public-domain data for Jun 2025 – May 2026, rebuilt by a GitHub Action. STANDBY uses it for US domestic schedules and misconnect risk. It shows last year's operation, not this year's published schedule, and doesn't cover international routes.",
       costNote: "Free.",
     },
+    {
+      id: "bts-t100",
+      label: "US DOT T-100 seat & passenger counts (BTS)",
+      provides: "How full each American nonstop route ran, by month: passengers ÷ seats (load factor), domestic and international",
+      state: "connected",
+      detail:
+        "Free, public-domain monthly totals, downloaded by a GitHub Action. Shown as historical context only. A monthly average says nothing certain about open seats on a specific flight. Excludes SkyWest and Republic, whose capacity can't be attributed to American.",
+      costNote: "Free.",
+    },
     americanAirlines.standbyLoads.status,
   ];
 }

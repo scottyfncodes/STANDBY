@@ -1,47 +1,85 @@
-# Flight data: research, audit and architecture (Phase 2)
+# Flight data: sources, coverage and limitations
 
-Researched Oct 27, 2026. Prices change; confirm on the provider's site before buying.
+Last reviewed Oct 27, 2026. Provider prices change; confirm on the provider's site before buying anything.
 
-## Providers compared
+## Data STANDBY uses today (all free)
 
-| Provider | Cost for personal use | Schedules | Live status | History | Notes |
+| Dataset | File | Source | Coverage | Freshness | Used for |
 | --- | --- | --- | --- | --- | --- |
-| **US DOT BTS on-time data** | Free, public domain | As flown, domestic, ~5-month lag | No | Yes, route-level | **Now integrated** via `scripts/bts/build-history.mjs` |
-| **AeroDataBox** (RapidAPI / API.Market) | Basic: free, small quota, commercial use reportedly not allowed on new free plans · Pro ≈ $5/mo · Pro 2 $15 · Ultra ≈ $30 · Mega ≈ $150 | Airport departures (FIDS), flight schedules up to ~180–365 days ahead depending on plan | Yes | Flight-number delay statistics | Best value; recommended first live adapter |
-| **FlightAware AeroAPI** | Personal tier: no minimum, ~$5/mo usage credit, then per-query (~$0.002–$0.05 per result set) | `/schedules` up to ~12 months ahead | Yes | Historical endpoints reportedly Standard tier ($100/mo minimum) and above | Excellent data; per-record billing makes full-airport schedules costly |
-| **Aviationstack** | Free: 100 requests/mo, no future schedules · Basic $49.99/mo | Future schedules on paid plans | Yes | Limited | Poor value for this use |
-| **Cirium / OAG** | Enterprise quotes; trials only | Best-in-class, 12–24 months forward | Yes | Yes | Out of budget for a personal app |
-| **Amadeus Self-Service** | Shut down July 17, 2026 | — | — | — | Not an option |
+| On-time history | `public/data/aa-history.json` | BTS Airline On-Time Performance, **Marketing Carrier** file (PREZIP monthly zips) | US domestic incl. PR/USVI; flights marketed as AA, incl. AA-branded regionals | ~2–3 month lag; window Jun 2025 – May 2026 | Scheduled departure times by month and weekday, operating span (seasonal start/end), block time, cancellation and late-arrival rates |
+| Load factors | `public/data/aa-loads.json` | BTS **T-100 Segment (All Carriers)**, TranStats table FMG, download form | Domestic **and** international nonstop segments operated by AA, MQ (Envoy), OH (PSA), PT (Piedmont) | ~3 month lag; TranStats reported data through Jul 2026 | Monthly passengers ÷ seats as historical context |
+| Reference network | `src/lib/data/aa-network.ts` | Compiled approximations | AA network incl. international | Static (Oct 2026) | Fallback when no history exists (international routes, new routes) |
+| Climate | `/api/climate` | Open-Meteo archive | Global | Live, cached 30 days | Weather by month |
 
-None of these provide non-revenue standby loads or priority lists. Seats for sale (fares APIs) are not standby availability.
+All BTS data is US government work in the public domain. Open-Meteo is CC BY 4.0 and attributed in the app.
 
-## What the app relied on before Phase 2
+### How the T-100 load factors are built (`scripts/bts/build-loads.mjs`)
 
-- **Frequencies and seasonality** were hand-compiled approximations (`src/lib/data/aa-network.ts`).
-- **Departure times** were synthesized by spreading the frequency across a typical window. Every "first flight", "last flight of the day" and "latest sensible attempt" depended on these invented times.
-- **Every route was assumed to fly every day**, so weekday schedule differences were invisible.
-- **Connections** used fixed 60/90/120-minute planning buffers with no evidence of how often the first leg runs late.
-- **Bug:** attempts home on the deadline day counted redeyes that land the next morning, after the deadline.
-- **No route reliability data:** no cancellation or delay rates.
+1. TranStats has no static file for T-100. The script GETs the public download form for table FMG and reads the ASP.NET view state.
+2. It POSTs one month at a time with only the needed fields: `YEAR, MONTH, UNIQUE_CARRIER, ORIGIN, DEST, DEPARTURES_SCHEDULED, DEPARTURES_PERFORMED, SEATS, PASSENGERS, CLASS`. The response is a zip containing a CSV.
+3. It keeps only:
+   - carriers AA, MQ, OH, PT;
+   - `CLASS = F` (scheduled passenger service);
+   - airports STANDBY knows;
+   - rows with seats > 0 and departures > 0.
+4. Per directional route and month it sums passengers, seats and departures. It drops route-months with fewer than 8 departures, where an average is meaningless. Load factor = passengers ÷ seats, capped at 100%.
+5. The window is the 12 months ending at the latest month TranStats reports for the table.
 
-## What Phase 2 changed
+### Missing values and exclusions
 
-1. **BTS history** (free). Covers Jun 2025 – May 2026 across 802 AA-marketed domestic routes, including Puerto Rico and USVI.
-   - **Schedule pattern:** for each route and month, the regularly operated departure times and the median flights per weekday, with mid-month time shifts merged.
-   - **Reliability:** cancellation, diversion, and the share of flights arriving 15, 30 or 60+ minutes late.
-2. **Engine** (`ItineraryEngine` with `FlightHistory`).
-   - **Times:** uses as-flown times for the same month and weekday when history exists, and falls back to reference estimates otherwise. Every departure carries a `basis`.
-   - **Seasonal gaps:** honored only when the data includes AA-branded regional partners for every month.
-   - **Misconnects:** connections carry historical misconnect evidence. The delay a connection can absorb is the layover minus a 30-minute floor, compared against the first leg's late-arrival rate.
-   - **Deadline fix:** attempts home now count only if they land by the end of the deadline day in the home airport's time zone.
-   - **Routes tab:** resilience notes explain whether a misconnect leaves later onward flights, show historical lateness, and flag once-daily legs.
-3. **Provider-independent live layer** (`src/lib/flightdata/`).
-   - Normalized flight types, a provider chain with fallback, a TTL cache and a rate limiter.
-   - `/api/flights/departures` returns an explicit `not_configured` result today.
-   - Credentials are read server-side only.
+- **SkyWest (OO), Republic (YX) and other capacity-purchase regionals** fly for several airlines and report T-100 under their own code, so their seats can't be attributed to American. Routes flown mainly by them have no load factor; the app then omits the factor rather than guessing.
+- **Rows with zero seats or zero departures** (cargo-only or non-revenue movements) are dropped.
+- **Missing on-time arrival delay values** are excluded from lateness percentages. Scheduled time `2400` is kept as 23:59 on its flight date.
+- **On-time history covers US domestic only.** International times remain reference estimates and are labeled "Estimated".
+- **Routes absent from the history** fall back to reference data. Absence is only treated as "didn't operate" for months where the route has history and every month came from the marketing-carrier file, which includes regional partners.
 
-## Recommended next steps
+## How STANDBY presents historical data
 
-1. **Optional, about $5/month.** Buy AeroDataBox Pro on API.Market, add `AERODATABOX_API_KEY` in Vercel, and implement the adapter in `src/lib/flightdata/registry.ts`. It would provide this year's real flight numbers and times for the next weeks, plus day-of status, and would replace last-year history for near-term dates. Verify responses against real flights before enabling.
-2. **Free.** Re-run the "Refresh BTS flight history" workflow monthly as BTS publishes new months (Actions → Run workflow, `branch: main`, updated months).
-3. **Free, later.** BTS T-100 segment data (seats and passengers by route and month) would give real historical load factors, the best public proxy for standby difficulty. It needs a form-based download.
+- Times from history are labeled **"As flown last year"**. They are last year's pattern for the same calendar month and weekday, not this year's published schedule.
+- Load factors appear as **"How full flights ran"**, e.g. "averaged 86% full in Nov 2025 (BTS T-100 monthly averages). Historical context only — not today's open seats." They feed one qualitative factor and, at 90% or above, one risk line. They never produce a probability, never claim seats are available, and never say a traveler will or won't clear.
+- American's standby loads, priority lists and employee rules remain **unknown**. No source is connected.
+
+## What history corrected in the reference network
+
+Comparing the bundled reference network with as-flown BTS data for Jun 2025 – May 2026:
+
+- **Seasons:** 66 directional routes had the wrong operating months. Examples:
+  - FLL–PHX flew only Jan–May.
+  - SLC–LAX flew only Jan–Mar.
+  - CLT–ABQ and LAX–SJC had no regular service at all.
+- **Frequencies:** 85 of 534 November frequencies were off by 3+ flights a day. Examples: TPA–MIA estimated 4, actual 10; AUS–DFW estimated 10, actual 15.
+- **Partial-month seasons:** these are now modeled. DFW–HDN (Steamboat), for example, starts mid-December last year.
+
+## Automated refresh (`.github/workflows/bts-history.yml`)
+
+- **Monthly schedule (12th) or manual run, mode `latest`.**
+  - Probes BTS for months after the dataset's last month and stops if nothing is new.
+  - The job summary says "No new BTS month published after YYYY-MM".
+  - If BTS can't be reached at all, the job fails with an error rather than reporting "no new data".
+- **Manual run, mode `rebuild`:** rebuilds the current window.
+- **Push to a feature branch that changes `scripts/bts/*.mjs`:** rebuilds and commits to that branch, so pipeline changes are reviewed with their data.
+- **Never pushes to `main`.** Scheduled and manual refreshes push a `data/bts-refresh-YYYY-MM` branch and open a PR. If the repository disallows Actions-created PRs, the summary links to a compare page instead.
+- **Strict:**
+  - a missing month fails the job;
+  - fewer than 400 history routes or 300 load routes fails it;
+  - a history route count more than 20% below the previous dataset fails it.
+  - Identical rebuilds don't commit; `generatedAt` is kept when nothing else changed.
+
+## Live providers (not connected; unchanged recommendation)
+
+| Provider | Personal-use cost | Notes |
+| --- | --- | --- |
+| AeroDataBox (RapidAPI / API.Market) | free basic tier; Pro ≈ $5/mo | Best value for this year's schedules and day-of status |
+| FlightAware AeroAPI | Personal tier, ~$5/mo credit, then per query | Per-record billing; history on paid tiers |
+| Aviationstack | $49.99/mo for future schedules | Poor value here |
+| Cirium / OAG | enterprise quotes | Out of budget |
+
+The provider-independent layer (`src/lib/flightdata/`, `/api/flights/departures`) returns `not_configured` until a provider is authorized and its adapter is verified against real flights.
+
+## Known limitations
+
+- **Last year's pattern isn't this year's schedule.** Route launches, cuts and retimes since then aren't reflected.
+- **Holiday weeks are blended into month-level weekday patterns.** For example, last year's Thanksgiving schedule tweaks aren't singled out.
+- **Load factors are monthly route averages.** Individual flights, especially the first and last of the day, can differ a lot.
+- **International schedules and connection lateness remain estimates.** BTS on-time data is domestic only.
+- **Long-haul arrivals:** trip length counts nights from the departure date, so arriving the next day on long-haul flights shortens the stay. The app shows "arrives next day" but doesn't adjust the night count.

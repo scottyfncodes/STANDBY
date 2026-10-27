@@ -2,9 +2,10 @@ import type { AirlineAdapter } from "@/lib/airlines/types";
 import { getAirport, isDomestic } from "@/lib/data/airports";
 import type { AirportCode, ISODate, LocalTime } from "@/lib/domain/types";
 import type { FlightHistory } from "@/lib/providers/history";
+import type { FlightLoads } from "@/lib/providers/loads";
 import { addDays, minutesToTime, monthOf, timeToMinutes, zonedParts, zonedToUtc } from "./time";
 
-export type { FlightHistory };
+export type { FlightHistory, FlightLoads };
 
 /**
  * One departure in the planning model. `basis` says where its time came from:
@@ -109,6 +110,8 @@ export class ItineraryEngine {
   constructor(
     readonly airline: AirlineAdapter,
     readonly history?: FlightHistory,
+    /** Historical load factors, used only as context in assessments. */
+    readonly loads?: FlightLoads,
   ) {}
 
   /** Planning departures for one route on one local date. Empty if not operating. */

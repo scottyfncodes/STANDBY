@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { todayIn } from "@/lib/engine/time";
 import { createHistory, isHistoryFile, type FlightHistory } from "@/lib/providers/history";
+import { createLoads, isLoadsFile, type FlightLoads } from "@/lib/providers/loads";
 
 /** Today's date in the device's zone, resolved after mount to avoid hydration mismatch. */
 export function useToday(): string | null {
@@ -12,30 +13,50 @@ export function useToday(): string | null {
 }
 
 
-export type HistoryState = { status: "loading" } | { status: "ready"; history: FlightHistory } | { status: "unavailable" };
+export type DataState<T> = { status: "loading" } | { status: "ready"; data: T } | { status: "unavailable" };
+export type HistoryState = DataState<FlightHistory>;
 
-let historyPromise: Promise<HistoryState> | undefined;
+const cache = new Map<string, Promise<DataState<unknown>>>();
 
-/** Load the static BTS history file once per page load; never blocks longer than a few seconds. */
-function loadHistory(): Promise<HistoryState> {
-  historyPromise ??= Promise.race([
-    fetch("/data/aa-history.json")
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
-      .then((json: unknown): HistoryState => (isHistoryFile(json) ? { status: "ready", history: createHistory(json) } : { status: "unavailable" })),
-    new Promise<HistoryState>((resolve) => setTimeout(() => resolve({ status: "unavailable" }), 6000)),
-  ]).catch((): HistoryState => ({ status: "unavailable" }));
-  return historyPromise;
+/** Load a static data file once per page load; never blocks longer than a few seconds. */
+function loadOnce<T>(url: string, accept: (json: unknown) => T | undefined): Promise<DataState<T>> {
+  let p = cache.get(url) as Promise<DataState<T>> | undefined;
+  if (!p) {
+    p = Promise.race([
+      fetch(url)
+        .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+        .then((json: unknown): DataState<T> => {
+          const data = accept(json);
+          return data ? { status: "ready", data } : { status: "unavailable" };
+        }),
+      new Promise<DataState<T>>((resolve) => setTimeout(() => resolve({ status: "unavailable" }), 6000)),
+    ]).catch((): DataState<T> => ({ status: "unavailable" }));
+    cache.set(url, p as Promise<DataState<unknown>>);
+  }
+  return p;
 }
 
-/** Historical schedules & reliability, or `unavailable` (the app then uses reference estimates). */
-export function useFlightHistory(): HistoryState {
-  const [state, setState] = useState<HistoryState>({ status: "loading" });
+function useStaticData<T>(url: string, accept: (json: unknown) => T | undefined): DataState<T> {
+  const [state, setState] = useState<DataState<T>>({ status: "loading" });
   useEffect(() => {
     let alive = true;
-    loadHistory().then((s) => alive && setState(s));
+    loadOnce(url, accept).then((s) => alive && setState(s));
     return () => {
       alive = false;
     };
-  }, []);
+  }, [url, accept]);
   return state;
+}
+
+const acceptHistory = (json: unknown) => (isHistoryFile(json) ? createHistory(json) : undefined);
+const acceptLoads = (json: unknown) => (isLoadsFile(json) ? createLoads(json) : undefined);
+
+/** Historical schedules & reliability, or `unavailable` (the app then uses reference estimates). */
+export function useFlightHistory(): DataState<FlightHistory> {
+  return useStaticData("/data/aa-history.json", acceptHistory);
+}
+
+/** Historical load factors (BTS T-100), or `unavailable` (the factor is then omitted). */
+export function useFlightLoads(): DataState<FlightLoads> {
+  return useStaticData("/data/aa-loads.json", acceptLoads);
 }

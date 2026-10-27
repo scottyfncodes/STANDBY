@@ -19,7 +19,8 @@ STANDBY never shows a percentage chance of clearing. Without validated standby o
 | Source | State | Notes |
 | --- | --- | --- |
 | American Airlines reference network (`src/lib/data/aa-network.ts`) | Reference | Approximate daily frequency, block time and seasonality per route. Not a live schedule. |
-| US DOT BTS on-time records (`public/data/aa-history.json`) | Historical, free | AA domestic schedules as flown (by month and weekday) plus late-arrival and cancellation rates, Jun 2025 – May 2026. Rebuilt by the "Refresh BTS flight history" GitHub Action. |
+| US DOT BTS on-time records (`public/data/aa-history.json`) | Historical, free | AA domestic schedules as flown (by month and weekday) plus late-arrival and cancellation rates, Jun 2025 – May 2026. Rebuilt by the "Refresh BTS flight history" GitHub Action (monthly; opens a PR, never pushes to main). See `docs/FLIGHT_DATA.md`. |
+| US DOT BTS T-100 segment data (`public/data/aa-loads.json`) | Historical, free | Monthly load factors (passengers ÷ seats) for AA-operated nonstop routes, domestic and international. Shown only as historical context — never as current seat availability. |
 | Open-Meteo historical weather (`/api/climate`) | Live, no key | 2021–2025 daily data averaged by month, cached 30 days, falls back to bundled normals. |
 | Holiday & demand calendar (`src/lib/engine/calendar.ts`) | Computed | Exact US holidays; demand effects, school breaks and events are labeled general patterns. |
 | Live schedules / status, public fares | Not connected | Provider-independent layer in `src/lib/flightdata/` and `/api/flights/departures`; returns an explicit "not configured". See `docs/FLIGHT_DATA.md`. |

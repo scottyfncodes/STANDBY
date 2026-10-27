@@ -5,7 +5,8 @@ import type { AirportCode, DataProvenance, ISODate, RiskTolerance, TripRequest }
 import { assessParty, type Party, type PartyAssessment } from "@/lib/eligibility/party";
 import { assessDemand, type DemandAssessment, type DemandLevel } from "./calendar";
 import { arrivingBy, dayOptions, summarizePaths, type DayOptions, type ItineraryEngine } from "./itinerary";
-import { addDays, diffDays } from "./time";
+import { addDays, diffDays, monthOf } from "./time";
+import { loadBand } from "@/lib/providers/loads";
 
 export type Tier = "flexible" | "workable" | "limited" | "high-risk" | "unavailable" | "insufficient";
 
@@ -186,7 +187,9 @@ export function assessTrip(input: AssessInput): TripAssessment {
       detail:
         slackDays === 0
           ? `You return on your deadline day, so only that day's ${inbound.depth} attempt${inbound.depth === 1 ? "" : "s"} remain.`
-          : `${slackDays} spare day${slackDays === 1 ? "" : "s"} before your deadline — about ${recoveryAttempts} more attempts home in the ${recoveryDays === 1 ? "next day" : `next ${recoveryDays} days`} alone.`,
+          : recoveryAttempts === 0
+            ? `${slackDays} spare day${slackDays === 1 ? "" : "s"} before your deadline, but no later flights land in time — only return-day attempts count.`
+            : `${slackDays} spare day${slackDays === 1 ? "" : "s"} before your deadline — about ${recoveryAttempts} more attempts home in the ${recoveryDays === 1 ? "next day" : `next ${recoveryDays} days`} alone.`,
       score: s,
       weight: 0.18,
       basis: "user",
@@ -203,6 +206,33 @@ export function assessTrip(input: AssessInput): TripAssessment {
     weight: 0.15,
     basis: "estimate",
   });
+
+  // Historical load factors on the most practical routing each way (context, not availability).
+  const loads = engine.loads;
+  const fullestLeg = (d: DayOptions) => {
+    const best = summarizePaths(d).find((p) => p.options.some((o) => !o.overnightConnection));
+    const it = best?.options.find((o) => !o.overnightConnection);
+    if (!loads || !it) return undefined;
+    const legs = it.legs.map((l) => ({ l, load: loads.route(l.from, l.to, monthOf(l.depLocal.date)) }));
+    if (legs.some((x) => !x.load)) return undefined; // partial evidence would understate the risk
+    return legs.sort((a, b) => b.load!.loadFactor - a.load!.loadFactor)[0];
+  };
+  const loadOut = fullestLeg(outPrimary);
+  const loadBack = fullestLeg(inPrimary);
+  if (loads && (loadOut || loadBack)) {
+    const score = (lf: number) => ({ roomier: 0.9, typical: 0.65, full: 0.4, "very-full": 0.2 })[loadBand(lf)];
+    const parts = [loadOut && `going, ${loadOut.l.from}→${loadOut.l.to} averaged ${Math.round(loadOut.load!.loadFactor)}% full`, loadBack && `coming home, ${loadBack.l.from}→${loadBack.l.to} averaged ${Math.round(loadBack.load!.loadFactor)}%`].filter(Boolean);
+    const observed = loads.label((loadOut ?? loadBack)!.load!);
+    const scores = [loadOut, loadBack].filter(Boolean).map((x) => score(x!.load!.loadFactor));
+    add({
+      key: "loads",
+      label: "How full flights ran",
+      detail: `In ${observed}, ${parts.join("; ")} (BTS T-100 monthly averages). Historical context only — not today's open seats.`,
+      score: scores.reduce((a, b) => a + b, 0) / scores.length,
+      weight: 0.1,
+      basis: "historical",
+    });
+  }
 
   add({
     key: "party",
@@ -243,6 +273,9 @@ export function assessTrip(input: AssessInput): TripAssessment {
   if (tier === "high-risk") rank = Math.min(rank, 0.45);
 
   const risks = collectRisks({ outbound, inbound, outPrimary, inPrimary, slackDays, weakest, demandOut, demandBack, partyA });
+  const fullest = [loadOut, loadBack].filter(Boolean).sort((a, b) => b!.load!.loadFactor - a!.load!.loadFactor)[0];
+  if (fullest && fullest.load!.loadFactor >= 90 && loads)
+    risks.push(`${fullest.l.from}→${fullest.l.to} averaged ${Math.round(fullest.load!.loadFactor)}% full in ${loads.label(fullest.load!)} — historically few empty seats for standby.`);
   const top = factors.filter((f) => f.impact === "helps").sort((a, b) => b.score * b.weight - a.score * a.weight)[0];
   const low = factors.filter((f) => f.impact === "hurts").sort((a, b) => a.score * a.weight - b.score * b.weight)[0];
   const headline = [top?.detail, low ? `Watch: ${low.detail.charAt(0).toLowerCase()}${low.detail.slice(1)}` : undefined].filter(Boolean).join(" ");

@@ -176,7 +176,15 @@ export function buildFallbacks(args: {
   // When the next day is still allowed, only count flights that land in time; otherwise keep the
   // raw count so the option can explain that it would miss the deadline.
   const next = args.nextDayAllowed ? byDeadline(nextRaw, args.arriveBy) : nextRaw;
-  if (next.depth) {
+  if (args.nextDayAllowed && args.arriveBy && !next.depth && nextRaw.depth) {
+    out.push({
+      kind: "next-day",
+      title: `${formatDate(nextRaw.date)} won't get you home in time`,
+      detail: `There are flights that day, but none land by the end of your deadline (${formatDate(args.arriveBy)}).`,
+      score: 1,
+      tone: "caution",
+    });
+  } else if (next.depth) {
     out.push({
       kind: "next-day",
       title: `Try again ${formatDate(next.date)}`,

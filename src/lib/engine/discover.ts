@@ -5,7 +5,7 @@ import type { Climate, ISODate, TripRequest } from "@/lib/domain/types";
 import type { Party } from "@/lib/eligibility/party";
 import { assessTrip, destinationAirports, type TripAssessment } from "./assess";
 import { DEMAND_LABEL } from "./calendar";
-import { ItineraryEngine, type FlightHistory } from "./itinerary";
+import { ItineraryEngine, type FlightHistory, type FlightLoads } from "./itinerary";
 import { addDays, diffDays, eachDate, formatShortDate, monthOf } from "./time";
 
 export interface DateOption {
@@ -154,8 +154,8 @@ export interface DiscoveryOutput {
 
 const FEASIBILITY_WEIGHT = { cautious: 0.65, balanced: 0.5, adventurous: 0.35 } as const;
 
-export function discover(airline: AirlineAdapter, request: TripRequest, party: Party, destinations = DESTINATIONS, history?: FlightHistory): DiscoveryOutput {
-  const engine = new ItineraryEngine(airline, history);
+export function discover(airline: AirlineAdapter, request: TripRequest, party: Party, destinations = DESTINATIONS, history?: FlightHistory, loads?: FlightLoads): DiscoveryOutput {
+  const engine = new ItineraryEngine(airline, history, loads);
   const results: DiscoveryResult[] = [];
   const filtered: DiscoveryOutput["filtered"] = [];
   const { dates } = candidateDates(request);
