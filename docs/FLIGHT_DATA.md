@@ -97,6 +97,22 @@ Comparing the bundled reference network with as-flown BTS data for Jun 2025 – 
 
 **Verification status:** the response parsing follows the published v1.6 schema (OpenAPI client models) and is covered by fixture tests. It has **not yet been checked against a real response**; do that when a key is first added. Steps: set the key on Preview, open a trip page within 30 days, and check that Evidence shows the live row and that flight numbers match aa.com.
 
+## Public fares: SerpApi (Google Flights)
+
+`src/lib/fares/serpapi.ts` prices the "buy a confirmed seat" backup. It is active when `SERPAPI_API_KEY` is set; without it `/api/fares` returns `503 not_configured` and the fare cards don't render.
+
+**How the app uses it:**
+- **Where:** the Backups tab (getting there and getting home) and the Getting home tab. Nowhere else.
+- **Searches:** one per direction: home airports → destination airports on the outbound date, and back on the return date. Each is a one-way economy search for one adult in USD, with all airports in each group searched together. That is at most **2 searches per trip**, made only when one of those tabs is opened.
+- **Caching:** Next's data cache keeps each result for 6 hours, and the server keeps a 30-minute in-memory copy. SerpApi's own 1-hour cache is free on its side.
+- **What's shown:** the cheapest fare flown entirely on American, the cheapest on any airline (when cheaper), Google's typical price range and price level, and a link to the same search on Google Flights.
+- **Limits:** dates in the past or more than 330 days out aren't searched. Prices change constantly; the card shows when they were checked.
+- **Never** treated as standby availability: seats for sale say nothing about open seats for non-revenue travelers.
+
+**Response handling:** follows SerpApi's documented Google Flights schema, checked against several real one-way and round-trip responses. "Google Flights hasn't returned any results" is shown as "no fares found", not as an error. A 401 or 403 means the key is wrong; a 429 means the quota or rate limit is used up. The key travels in the query string, so request URLs are never logged or returned.
+
+**Cost:** SerpApi's free plan has a small monthly allowance (250 searches at last check); paid plans start at $25/month for 1,000.
+
 ### Other providers considered
 
 | Provider | Personal-use cost | Notes |
@@ -104,6 +120,8 @@ Comparing the bundled reference network with as-flown BTS data for Jun 2025 – 
 | AeroDataBox (API.Market / RapidAPI) | RapidAPI free basic tier; API.Market Pro ≈ $5/mo | **Integrated.** Best value for this year's schedules and day-of status |
 | FlightAware AeroAPI | Personal tier, ~$5/mo credit, then per query | Per-record billing; history on paid tiers |
 | Aviationstack | $49.99/mo for future schedules | Poor value here |
+| Amadeus Self-Service | — | Shut down July 17, 2026; enterprise contracts only |
+| Duffel | ≈ $0.005 per search without bookings | Official airline content; needs live-mode account approval |
 | Cirium / OAG | enterprise quotes | Out of budget |
 
 ## Known limitations

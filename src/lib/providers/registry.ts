@@ -39,11 +39,14 @@ export function providerStatuses(env: Record<string, string | undefined> = proce
     },
     {
       id: "fares",
-      label: "Public fares & seat inventory",
-      provides: "Prices and seats for sale to the public",
-      state: "not_configured",
-      detail: "Not connected. Even when connected, seats for sale are not the same as standby availability — STANDBY will never use one as a stand-in for the other.",
-      requires: "DUFFEL_ACCESS_TOKEN (future)",
+      label: "Public fares (Google Flights via SerpApi)",
+      provides: "The cheapest one-way fare to buy as a confirmed-seat backup, on American and on any airline",
+      state: env.SERPAPI_API_KEY ? "connected" : "not_configured",
+      detail: env.SERPAPI_API_KEY
+        ? "Connected. Shown on a trip's Backups and Getting home tabs only: one search for the outbound date and one for the return date, cached. Seats for sale are not standby availability, and STANDBY never uses one as a stand-in for the other."
+        : "Not connected. The adapter is built; add a SerpApi key to enable it. Seats for sale are not standby availability, and STANDBY never uses one as a stand-in for the other.",
+      requires: env.SERPAPI_API_KEY ? undefined : "SERPAPI_API_KEY",
+      costNote: "SerpApi free plan covers a small monthly allowance; paid plans start at $25/mo for 1,000 searches. Up to 2 searches per trip, cached for 6 hours.",
     },
     {
       id: "bts-history",
