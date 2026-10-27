@@ -644,6 +644,9 @@ details.disclosure > summary::-webkit-details-marker {
 .postcard-art {
   position: absolute;
   inset: 0;
+  /* The SVG keeps its 2:1 viewBox height; min-height covers boxes taller than that (narrow phones). */
+  width: 100%;
+  min-height: 100%;
   z-index: -1;
 }
 
