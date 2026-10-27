@@ -43,3 +43,11 @@ export class LiveSchedule {
     return legs;
   }
 }
+
+/** Short Evidence label for a live-schedule request that didn't produce data. */
+export function liveFallbackLabel(s: { status: string; reason?: string }): string {
+  if (s.status !== "unavailable") return "Loading…";
+  if (s.reason === "not_configured") return "Not connected";
+  if (s.reason === "unsupported") return "Out of range";
+  return "Unavailable";
+}
