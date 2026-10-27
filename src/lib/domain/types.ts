@@ -27,12 +27,13 @@ export interface Airport {
 /**
  * How trustworthy a piece of data is.
  * - `live`: fetched from a connected provider at `fetchedAt`.
+ * - `historical`: observed in past operations (e.g. US DOT on-time records) — real, but not current.
  * - `reference`: bundled reference data compiled from public information; approximate.
  * - `estimate`: derived by STANDBY's own heuristics.
  * - `user`: supplied by the traveler.
  * - `unavailable`: no source is connected.
  */
-export type ProvenanceKind = "live" | "reference" | "estimate" | "user" | "unavailable";
+export type ProvenanceKind = "live" | "historical" | "reference" | "estimate" | "user" | "unavailable";
 
 export interface DataProvenance {
   kind: ProvenanceKind;

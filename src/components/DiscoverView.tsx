@@ -9,7 +9,7 @@ import type { TripRequest } from "@/lib/domain/types";
 import { defaultRequest, discover } from "@/lib/engine/discover";
 import { formatShortDate } from "@/lib/engine/time";
 import { DestinationCard } from "./DestinationCard";
-import { useToday } from "./hooks";
+import { useFlightHistory, useToday } from "./hooks";
 import { Icon } from "./icons";
 import { useStore } from "./store";
 import { TopBar } from "./TopBar";
@@ -46,6 +46,7 @@ export function DiscoverView() {
   const params = useSearchParams();
   const router = useRouter();
   const [request, setRequest] = useState<TripRequest | null>(null);
+  const historyState = useFlightHistory();
   const [editing, setEditing] = useState(false);
   const [limit, setLimit] = useState(PAGE);
 
@@ -80,10 +81,11 @@ export function DiscoverView() {
 
   const deferred = useDeferredValue(request);
   const errors = deferred ? validate(deferred) : [];
+  const history = historyState.status === "ready" ? historyState.history : undefined;
   const output = useMemo(() => {
-    if (!deferred || validate(deferred).length) return null;
-    return discover(getAirline(profile.party.airline), deferred, profile.party);
-  }, [deferred, profile.party]);
+    if (!deferred || validate(deferred).length || historyState.status === "loading") return null;
+    return discover(getAirline(profile.party.airline), deferred, profile.party, undefined, history);
+  }, [deferred, profile.party, historyState.status, history]);
   const stale = deferred !== request;
   const query = deferred ? encodeRequest(deferred).toString() : "";
 

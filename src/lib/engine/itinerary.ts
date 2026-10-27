@@ -1,12 +1,17 @@
 import type { AirlineAdapter } from "@/lib/airlines/types";
 import { getAirport, isDomestic } from "@/lib/data/airports";
 import type { AirportCode, ISODate, LocalTime } from "@/lib/domain/types";
+import type { FlightHistory } from "@/lib/providers/history";
 import { addDays, minutesToTime, monthOf, timeToMinutes, zonedParts, zonedToUtc } from "./time";
 
+export type { FlightHistory };
+
 /**
- * A representative departure. Times are ESTIMATED from typical frequency and
- * bank patterns — not a published schedule. `estimated` is always true until a
- * live schedule provider is connected.
+ * One departure in the planning model. `basis` says where its time came from:
+ * - `historical`: a regularly operated scheduled time in the same month and weekday
+ *   last year (US DOT on-time records).
+ * - `estimate`: spread across typical bank windows from the reference frequency.
+ * Neither is a current published schedule.
  */
 export interface Departure {
   from: AirportCode;
@@ -16,9 +21,20 @@ export interface Departure {
   depLocal: { date: ISODate; time: LocalTime };
   arrLocal: { date: ISODate; time: LocalTime };
   blockMin: number;
-  /** Approximate typical daily frequency of this route. */
+  /** Daily frequency of this route on this date (historical count, or reference estimate). */
   routeDaily: number;
-  estimated: true;
+  basis: "historical" | "estimate";
+}
+
+/** Historical evidence on whether a connection's first leg tends to run late. */
+export interface ConnectionRisk {
+  /** Minutes of delay the connection can absorb before it is likely missed. */
+  toleranceMin: number;
+  /** Percent of first-leg flights historically arriving at least `thresholdMin` late. */
+  lateShare: number;
+  thresholdMin: 15 | 30 | 60;
+  /** Percent of first-leg flights cancelled. */
+  cancelShare: number | null;
 }
 
 export interface Itinerary {
@@ -37,7 +53,16 @@ export interface Itinerary {
   arrivesLaterDay: boolean;
   /** Smallest daily frequency along the path. */
   weakestDaily: number;
+  basis: "historical" | "estimate";
+  connectionRisk?: ConnectionRisk;
 }
+
+/**
+ * Time needed at the hub before the onward flight regardless of delay: deplaning,
+ * walking between gates, and boarding closing ~15 minutes before departure.
+ * A STANDBY planning assumption, not an airline rule.
+ */
+export const CONNECTION_FLOOR_MIN = 30;
 
 type Region = "na" | "eu" | "asia" | "hi" | "sa-long";
 
@@ -81,9 +106,12 @@ export class ItineraryEngine {
   private onwardCache = new Map<string, Departure[]>();
   private dayOptionsCache = new Map<string, DayOptions>();
 
-  constructor(readonly airline: AirlineAdapter) {}
+  constructor(
+    readonly airline: AirlineAdapter,
+    readonly history?: FlightHistory,
+  ) {}
 
-  /** Representative departures for one route on one local date. Empty if not operating. */
+  /** Planning departures for one route on one local date. Empty if not operating. */
   departures(from: AirportCode, to: AirportCode, date: ISODate): Departure[] {
     const key = `${from}-${to}-${date}`;
     const cached = this.depCache.get(key);
@@ -92,22 +120,34 @@ export class ItineraryEngine {
     const fa = getAirport(from);
     const ta = getAirport(to);
     let out: Departure[] = [];
-    if (route && fa && ta) {
-      out = representativeSlots(from, to, route.daily).map((time) => {
-        const depUtc = zonedToUtc(date, time, fa.tz);
-        const arrUtc = depUtc + route.blockMin * 60_000;
-        return {
-          from,
-          to,
-          depUtc,
-          arrUtc,
-          depLocal: { date, time },
-          arrLocal: zonedParts(arrUtc, ta.tz),
-          blockMin: route.blockMin,
-          routeDaily: route.daily,
-          estimated: true as const,
-        };
-      });
+    if (fa && ta) {
+      // Prefer how the route actually operated in this month and weekday last year.
+      let hist = this.history?.day(from, to, date);
+      // Without regional-partner coverage, an empty day isn't evidence the route didn't fly.
+      if (hist && !hist.times.length && !this.history?.complete) hist = undefined;
+      const blockMin = hist?.blockMin ?? this.airline.network.routeAnyMonth(from, to)?.blockMin;
+      const plan: { times: LocalTime[]; basis: Departure["basis"] } | undefined = hist && blockMin
+        ? { times: hist.times, basis: "historical" }
+        : route
+          ? { times: representativeSlots(from, to, route.daily), basis: "estimate" }
+          : undefined;
+      if (plan && blockMin) {
+        out = plan.times.map((time) => {
+          const depUtc = zonedToUtc(date, time, fa.tz);
+          const arrUtc = depUtc + blockMin * 60_000;
+          return {
+            from,
+            to,
+            depUtc,
+            arrUtc,
+            depLocal: { date, time },
+            arrLocal: zonedParts(arrUtc, ta.tz),
+            blockMin,
+            routeDaily: plan.times.length,
+            basis: plan.basis,
+          };
+        });
+      }
     }
     this.depCache.set(key, out);
     return out;
@@ -148,6 +188,17 @@ export class ItineraryEngine {
     });
   }
 
+  /** Historical late-arrival evidence for the first leg, against the delay this connection can absorb. */
+  private connectionRisk(first: Departure, layoverMin: number): ConnectionRisk | undefined {
+    const rel = this.history?.reliability(first.from, first.to);
+    if (!rel || rel.n < 30) return undefined;
+    const toleranceMin = Math.max(0, layoverMin - CONNECTION_FLOOR_MIN);
+    const thresholdMin = toleranceMin >= 60 ? 60 : toleranceMin >= 30 ? 30 : 15;
+    const share = thresholdMin === 60 ? rel.late60 : thresholdMin === 30 ? rel.late30 : rel.late15;
+    if (share === null) return undefined;
+    return { toleranceMin, lateShare: share, thresholdMin, cancelShare: rel.cancel };
+  }
+
   private bufferMin(first: Departure, second: Departure): number {
     const b = this.airline.connectionBufferMin;
     const enteringUS = !isDomestic(first.from) && isDomestic(first.to);
@@ -181,7 +232,9 @@ export class ItineraryEngine {
           if (!next) continue;
           const layoverMin = (next.depUtc - f.arrUtc) / 60_000;
           if (layoverMin > 20 * 60) continue;
-          result.push(makeItinerary([f, next], layoverMin, this.spansNight(hub, f.arrUtc, next.depUtc, f.arrLocal.date)));
+          const it = makeItinerary([f, next], layoverMin, this.spansNight(hub, f.arrUtc, next.depUtc, f.arrLocal.date));
+          it.connectionRisk = this.connectionRisk(f, layoverMin);
+          result.push(it);
         }
       }
     }
@@ -209,6 +262,7 @@ function makeItinerary(legs: Departure[], layoverMin?: number, overnightAtHub = 
     overnightConnection: overnightAtHub,
     arrivesLaterDay: last.arrLocal.date > first.depLocal.date,
     weakestDaily: Math.min(...legs.map((l) => l.routeDaily)),
+    basis: legs.every((l) => l.basis === "historical") ? "historical" : "estimate",
   };
 }
 
@@ -247,6 +301,19 @@ function computeDayOptions(
   const all: Itinerary[] = [];
   for (const o of origins) for (const d of destinations) if (o !== d) all.push(...engine.itineraries(o, d, date, allowConnections));
   all.sort((a, b) => a.depUtc - b.depUtc);
+  return summarizeDay(date, all);
+}
+
+/**
+ * Keep only itineraries that land by the end of `deadline` in the arrival airport's
+ * local time — a redeye leaving on the deadline day doesn't get you home in time.
+ */
+export function arrivingBy(day: DayOptions, deadline: ISODate): DayOptions {
+  const kept = day.itineraries.filter((i) => i.legs[i.legs.length - 1]!.arrLocal.date <= deadline);
+  return kept.length === day.itineraries.length ? day : summarizeDay(day.date, kept);
+}
+
+function summarizeDay(date: ISODate, all: Itinerary[]): DayOptions {
   const sameDay = all.filter((i) => !i.overnightConnection);
   const finalLegs = new Set(sameDay.map((i) => {
     const l = i.legs[i.legs.length - 1]!;
@@ -276,6 +343,11 @@ export interface PathSummary {
   options: Itinerary[];
   typicalMin: number;
   overnightRisk: boolean;
+  basis: "historical" | "estimate";
+  /** Worst historical first-leg late-arrival evidence across the day's connections. */
+  connectionRisk?: ConnectionRisk;
+  /** Same-day onward departures from the hub after the first option's connection. */
+  laterOnward?: number;
 }
 
 /** Group a day's itineraries by path (origin → [hub] → destination). */
@@ -290,6 +362,8 @@ export function summarizePaths(day: DayOptions): PathSummary[] {
     .map(([key, options]) => {
       const first = options[0]!;
       const sameDay = options.filter((o) => !o.overnightConnection);
+      const risks = sameDay.flatMap((o) => (o.connectionRisk ? [o.connectionRisk] : []));
+      const onwardLegs = new Set(sameDay.map((o) => o.legs[1]?.depUtc).filter((x): x is number => x !== undefined));
       return {
         key,
         origin: first.origin,
@@ -300,6 +374,9 @@ export function summarizePaths(day: DayOptions): PathSummary[] {
         options,
         typicalMin: Math.min(...options.map((o) => o.totalMin)),
         overnightRisk: options.some((o) => o.overnightConnection) || sameDay.length === 0,
+        basis: options.every((o) => o.basis === "historical") ? ("historical" as const) : ("estimate" as const),
+        connectionRisk: risks.sort((a, b) => b.lateShare - a.lateShare)[0],
+        laterOnward: first.via ? Math.max(0, onwardLegs.size - 1) : undefined,
       };
     })
     .sort((a, b) => pathUsefulness(b) - pathUsefulness(a));
@@ -309,5 +386,31 @@ export function summarizePaths(day: DayOptions): PathSummary[] {
 export function pathUsefulness(p: PathSummary): number {
   const sameDay = p.options.filter((o) => !o.overnightConnection).length;
   const directness = p.via ? 0 : 3;
-  return directness + Math.min(sameDay, 10) * 0.6 + Math.min(p.weakestDaily, 8) * 0.4 - p.typicalMin / 600 - (p.overnightRisk ? 1.5 : 0);
+  const misconnect = p.connectionRisk ? Math.min(p.connectionRisk.lateShare, 50) / 25 : 0;
+  return directness + Math.min(sameDay, 10) * 0.6 + Math.min(p.weakestDaily, 8) * 0.4 - p.typicalMin / 600 - (p.overnightRisk ? 1.5 : 0) - misconnect;
+}
+
+/** Plain-language reasons a routing is (or isn't) resilient to a missed flight. */
+export function resilienceNotes(p: PathSummary): { text: string; tone: "good" | "ok" | "caution" }[] {
+  const notes: { text: string; tone: "good" | "ok" | "caution" }[] = [];
+  const sameDay = p.options.filter((o) => !o.overnightConnection).length;
+  if (!p.via) {
+    notes.push(sameDay >= 4 ? { text: `${sameDay} nonstops that day — miss one and roll to the next.`, tone: "good" } : { text: `Nonstop, but only ${sameDay} that day.`, tone: sameDay <= 1 ? "caution" : "ok" });
+  } else {
+    notes.push({ text: `Two standby lists to clear (${p.origin}→${p.via}, then ${p.via}→${p.destination}).`, tone: "ok" });
+    if (p.laterOnward !== undefined)
+      notes.push(
+        p.laterOnward >= 3
+          ? { text: `If you misconnect in ${p.via}, about ${p.laterOnward} later onward flights remain that day.`, tone: "good" }
+          : { text: `Only ${p.laterOnward} later onward flight${p.laterOnward === 1 ? "" : "s"} from ${p.via} after the first connection.`, tone: "caution" },
+      );
+    const r = p.connectionRisk;
+    if (r)
+      notes.push({
+        text: `Historically ${r.lateShare}% of ${p.origin}→${p.via} flights arrived ${r.thresholdMin}+ min late; the tightest connection here absorbs about ${r.toleranceMin} min.`,
+        tone: r.lateShare >= 20 ? "caution" : r.lateShare >= 10 ? "ok" : "good",
+      });
+  }
+  if (p.weakestDaily <= 1) notes.push({ text: "Relies on a once-a-day flight.", tone: "caution" });
+  return notes;
 }

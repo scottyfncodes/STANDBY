@@ -11,6 +11,7 @@
  * Requires: curl, unzip. Runs in CI (GitHub Actions); not at app runtime.
  */
 import { spawn, execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import path from "node:path";
@@ -155,6 +156,32 @@ async function processFile(zip, kind, y, m) {
   return seen > 0;
 }
 
+const toMin = (t) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
+
+/**
+ * Schedules shift by a few minutes mid-month (e.g. 18:39 → 18:45). Merge nearby times
+ * whose operating dates barely overlap into one flight, labeled with its most common time.
+ */
+export function mergeShiftedTimes(timeMap) {
+  const entries = [...timeMap.entries()].sort(([a], [b]) => a.localeCompare(b));
+  const clusters = [];
+  for (const [t, dates] of entries) {
+    const prev = clusters[clusters.length - 1];
+    if (prev && toMin(t) - toMin(prev.last) <= 45) {
+      let overlap = 0;
+      for (const d of dates) if (prev.dates.has(d)) overlap++;
+      if (overlap <= 0.2 * Math.min(dates.size, prev.dates.size)) {
+        for (const d of dates) prev.dates.add(d);
+        if (dates.size > prev.bestCount) (prev.best = t), (prev.bestCount = dates.size);
+        prev.last = t;
+        continue;
+      }
+    }
+    clusters.push({ best: t, bestCount: dates.size, last: t, dates: new Set(dates) });
+  }
+  return clusters.map((c) => [c.best, c.dates]).sort(([a], [b]) => a.localeCompare(b));
+}
+
 function datesByDow(y, m) {
   const counts = [0, 0, 0, 0, 0, 0, 0];
   const days = new Date(Date.UTC(y, m, 0)).getUTCDate();
@@ -162,6 +189,10 @@ function datesByDow(y, m) {
   return counts;
 }
 
+const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isMain) await main();
+
+async function main() {
 const used = [];
 const failed = [];
 for (const [y, m] of months(from, to)) {
@@ -200,15 +231,30 @@ for (const [key, r] of routes) {
   }
   for (const [mNum, mo] of latest) {
     const dowTotals = datesByDow(mo.y, mo.m);
+    const clusters = mergeShiftedTimes(mo.times);
+    // Median flights per day for each weekday (dates with no flights count as zero).
+    const perDate = new Map();
+    for (const dates of mo.times.values()) for (const ds of dates) perDate.set(ds, (perDate.get(ds) ?? 0) + 1);
+    const byDow = [[], [], [], [], [], [], []];
+    const days = new Date(Date.UTC(mo.y, mo.m, 0)).getUTCDate();
+    for (let d = 1; d <= days; d++) {
+      const ds = `${mo.y}-${String(mo.m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+      byDow[new Date(`${ds}T00:00:00Z`).getUTCDay()].push(perDate.get(ds) ?? 0);
+    }
+    const median = (xs) => {
+      const s = [...xs].sort((a, b) => a - b);
+      return s.length ? s[Math.floor((s.length - 1) / 2)] : 0;
+    };
+    const n = byDow.map(median);
     const times = [];
-    for (const [t, dates] of [...mo.times.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    for (const [t, dates] of clusters) {
       const perDow = [0, 0, 0, 0, 0, 0, 0];
       for (const ds of dates) perDow[new Date(`${ds}T00:00:00Z`).getUTCDay()]++;
       const shares = perDow.map((c, i) => c / dowTotals[i]);
       if (Math.max(...shares) < 0.25) continue; // one-off or irregular
       times.push([t, shares.map((s) => Math.min(9, Math.round(s * 9))).join("")]);
     }
-    if (times.length) monthsOut[mNum] = { y: mo.y, t: times };
+    if (times.length) monthsOut[mNum] = { y: mo.y, n, t: times };
   }
   if (!Object.keys(monthsOut).length) continue;
   const rel = r.rel;
@@ -233,3 +279,4 @@ const result = {
 mkdirSync(path.dirname(out), { recursive: true });
 writeFileSync(out, JSON.stringify(result));
 console.log(`Wrote ${out}: ${Object.keys(outRoutes).length} routes from ${used.length} months (${failed.length} failed).`);
+}
