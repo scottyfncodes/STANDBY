@@ -3,12 +3,22 @@ import { getAirport, isDomestic } from "@/lib/data/airports";
 import type { AirportCode, ISODate, LocalTime } from "@/lib/domain/types";
 import type { FlightHistory } from "@/lib/providers/history";
 import type { FlightLoads } from "@/lib/providers/loads";
+import type { LiveSchedule } from "@/lib/providers/live";
 import { addDays, minutesToTime, monthOf, timeToMinutes, zonedParts, zonedToUtc } from "./time";
 
-export type { FlightHistory, FlightLoads };
+export type { FlightHistory, FlightLoads, LiveSchedule };
+
+/** Where a time came from, best first. */
+export type Basis = "live" | "historical" | "estimate";
+const BASIS_RANK: Record<Basis, number> = { live: 0, historical: 1, estimate: 2 };
+/** The weakest basis among several (a chain is only as verified as its least verified leg). */
+export function weakestBasis(bases: Basis[]): Basis {
+  return bases.reduce<Basis>((w, b) => (BASIS_RANK[b] > BASIS_RANK[w] ? b : w), "live");
+}
 
 /**
  * One departure in the planning model. `basis` says where its time came from:
+ * - `live`: the published schedule from a connected provider, fetched for this date.
  * - `historical`: a regularly operated scheduled time in the same month and weekday
  *   last year (US DOT on-time records).
  * - `estimate`: spread across typical bank windows from the reference frequency.
@@ -22,9 +32,12 @@ export interface Departure {
   depLocal: { date: ISODate; time: LocalTime };
   arrLocal: { date: ISODate; time: LocalTime };
   blockMin: number;
-  /** Daily frequency of this route on this date (historical count, or reference estimate). */
+  /** Daily frequency of this route on this date (live, historical count, or reference estimate). */
   routeDaily: number;
-  basis: "historical" | "estimate";
+  basis: Basis;
+  /** Flight number and status, only for live departures. */
+  flight?: string;
+  status?: string;
 }
 
 /** Historical evidence on whether a connection's first leg tends to run late. */
@@ -54,7 +67,7 @@ export interface Itinerary {
   arrivesLaterDay: boolean;
   /** Smallest daily frequency along the path. */
   weakestDaily: number;
-  basis: "historical" | "estimate";
+  basis: Basis;
   connectionRisk?: ConnectionRisk;
 }
 
@@ -112,6 +125,8 @@ export class ItineraryEngine {
     readonly history?: FlightHistory,
     /** Historical load factors, used only as context in assessments. */
     readonly loads?: FlightLoads,
+    /** Live published schedules for the airport-days that were fetched. */
+    readonly live?: LiveSchedule,
   ) {}
 
   /** Planning departures for one route on one local date. Empty if not operating. */
@@ -123,7 +138,28 @@ export class ItineraryEngine {
     const fa = getAirport(from);
     const ta = getAirport(to);
     let out: Departure[] = [];
-    if (fa && ta) {
+    const liveLegs = fa && ta ? this.live?.legs(from, to, date) : undefined;
+    if (liveLegs) {
+      // A published schedule for this date beats any pattern. Cancelled flights aren't attempts.
+      const flying = liveLegs.filter((f) => f.status !== "cancelled");
+      out = flying.map((f) => {
+        const depUtc = Date.parse(f.scheduledDep.utc);
+        const arrUtc = Date.parse(f.scheduledArr.utc);
+        return {
+          from,
+          to,
+          depUtc,
+          arrUtc,
+          depLocal: f.scheduledDep.local,
+          arrLocal: f.scheduledArr.local,
+          blockMin: Math.round((arrUtc - depUtc) / 60_000),
+          routeDaily: flying.length,
+          basis: "live" as const,
+          flight: `${f.carrier} ${f.number}`,
+          status: f.status,
+        };
+      });
+    } else if (fa && ta) {
       // Prefer how the route actually operated in this month and weekday last year.
       let hist = this.history?.day(from, to, date);
       // Without regional-partner coverage, an empty day isn't evidence the route didn't fly.
@@ -266,7 +302,7 @@ function makeItinerary(legs: Departure[], layoverMin?: number, overnightAtHub = 
     overnightConnection: overnightAtHub,
     arrivesLaterDay: last.arrLocal.date > first.depLocal.date,
     weakestDaily: Math.min(...legs.map((l) => l.routeDaily)),
-    basis: legs.every((l) => l.basis === "historical") ? "historical" : "estimate",
+    basis: weakestBasis(legs.map((l) => l.basis)),
   };
 }
 
@@ -347,7 +383,7 @@ export interface PathSummary {
   options: Itinerary[];
   typicalMin: number;
   overnightRisk: boolean;
-  basis: "historical" | "estimate";
+  basis: Basis;
   /** Worst historical first-leg late-arrival evidence across the day's connections. */
   connectionRisk?: ConnectionRisk;
   /** Same-day onward departures from the hub after the first option's connection. */
@@ -378,7 +414,7 @@ export function summarizePaths(day: DayOptions): PathSummary[] {
         options,
         typicalMin: Math.min(...options.map((o) => o.totalMin)),
         overnightRisk: options.some((o) => o.overnightConnection) || sameDay.length === 0,
-        basis: options.every((o) => o.basis === "historical") ? ("historical" as const) : ("estimate" as const),
+        basis: weakestBasis(options.map((o) => o.basis)),
         connectionRisk: risks.sort((a, b) => b.lateShare - a.lateShare)[0],
         laterOnward: first.via ? Math.max(0, onwardLegs.size - 1) : undefined,
       };

@@ -8,7 +8,7 @@ import { getAirport } from "@/lib/data/airports";
 import { getDestination, type Destination } from "@/lib/data/destinations";
 import { decodeRequest, encodeRequest } from "@/lib/domain/query";
 import type { TripRequest } from "@/lib/domain/types";
-import { TIER_COPY, type Factor, type TripAssessment } from "@/lib/engine/assess";
+import { assessTrip, TIER_COPY, type Factor, type TripAssessment } from "@/lib/engine/assess";
 import { DEMAND_LABEL, type DemandLevel } from "@/lib/engine/calendar";
 import { compareDates, defaultRequest, type DateOption } from "@/lib/engine/discover";
 import { ItineraryEngine, resilienceNotes, type Itinerary, type PathSummary } from "@/lib/engine/itinerary";
@@ -16,9 +16,10 @@ import { buildPlan, type FallbackKind, type FallbackOption, type TripPlan } from
 import { formatDate, formatDuration, formatShortDate, formatTime, monthName, monthOf, weekdayName } from "@/lib/engine/time";
 import type { ClimateResult } from "@/lib/providers/types";
 import type { FlightHistory } from "@/lib/providers/history";
+import { LiveSchedule } from "@/lib/providers/live";
 import { LOAD_BAND_LABEL, loadBand, type FlightLoads } from "@/lib/providers/loads";
 import { assessParty } from "@/lib/eligibility/party";
-import { useFlightHistory, useFlightLoads, useToday } from "./hooks";
+import { useFlightHistory, useFlightLoads, useLiveDay, useToday, type LiveState } from "./hooks";
 import { Icon, type IconName } from "./icons";
 import { useStore } from "./store";
 import { PostcardArt, Prov, RouteDiagram, Segmented, TierBadge } from "./ui";
@@ -58,10 +59,26 @@ export function TripView({ destinationId }: { destinationId: string }) {
   const wanted = params.get("d");
   const selected = comparison ? comparison.options.find((o) => o.date === wanted) ?? comparison.options[0] : undefined;
   const best = comparison?.options[0];
-  const plan = useMemo(
-    () => (selected && request ? buildPlan({ engine, assessment: selected.assessment, destination, request, allOrigins: selected.assessment.origins }) : undefined),
-    [engine, selected, destination, request],
+
+  // Live published schedules for the two airport-days the plan depends on most: leaving home on
+  // the outbound date, and leaving the destination on the return date. Date ranking above keeps
+  // using history so every date is compared on the same footing.
+  const liveOut = useLiveDay(request?.origins[0], selected?.date);
+  const liveBack = useLiveDay(destination.airports[0], selected?.returnDate);
+  const live = useMemo(() => {
+    const days = [liveOut, liveBack].flatMap((x) => (x.status === "ready" ? [x.day] : []));
+    return days.length ? new LiveSchedule(days) : undefined;
+  }, [liveOut, liveBack]);
+  const planEngine = useMemo(() => (live ? new ItineraryEngine(airline, history, loads, live) : engine), [live, airline, history, loads, engine]);
+  const assessment = useMemo(
+    () => (selected && request ? (live ? assessTrip({ airline, engine: planEngine, request, party: profile.party, destination, outboundDate: selected.date }) : selected.assessment) : undefined),
+    [selected, request, live, airline, planEngine, profile.party, destination],
   );
+  const plan = useMemo(
+    () => (assessment && request ? buildPlan({ engine: planEngine, assessment, destination, request, allOrigins: assessment.origins }) : undefined),
+    [planEngine, assessment, destination, request],
+  );
+  const liveStates = { out: liveOut, back: liveBack };
 
   const climate = useClimate(destination.airports[0]!);
   const query = request ? encodeRequest(request).toString() : "";
@@ -100,7 +117,7 @@ export function TripView({ destinationId }: { destinationId: string }) {
         </h1>
         {selected && (
           <div className="row" style={{ marginTop: 10, flexWrap: "wrap" }}>
-            <TierBadge tier={selected.assessment.tier} />
+            <TierBadge tier={(assessment ?? selected.assessment).tier} />
             <span style={{ fontSize: 14, fontWeight: 600 }} className="mono">
               {formatDate(selected.date)} → {formatDate(selected.returnDate)}
             </span>
@@ -131,12 +148,12 @@ export function TripView({ destinationId }: { destinationId: string }) {
             </div>
           )}
           <div style={{ marginTop: 12 }} className="narrow">
-            {tab === "plan" && <PlanTab a={selected.assessment} plan={plan} destination={destination} request={request} climate={climate} isBest={best?.date === selected.date} best={best} onPick={pickDate} goTo={setTab} history={history} />}
+            {tab === "plan" && <PlanTab a={assessment ?? selected.assessment} plan={plan} destination={destination} request={request} climate={climate} isBest={best?.date === selected.date} best={best} onPick={pickDate} goTo={setTab} history={history} />}
             {tab === "dates" && <DatesTab comparison={comparison} selected={selected.date} onPick={pickDate} destination={destination} request={request} climate={climate} engine={engine} />}
-            {tab === "routes" && <RoutesTab plan={plan} a={selected.assessment} history={history} loads={loads} />}
+            {tab === "routes" && <RoutesTab plan={plan} a={assessment ?? selected.assessment} history={history} loads={loads} live={liveStates} />}
             {tab === "backups" && <BackupsTab plan={plan} />}
-            {tab === "home" && <HomeTab plan={plan} a={selected.assessment} request={request} />}
-            {tab === "evidence" && <EvidenceTab a={selected.assessment} airlineName={airline.name} climate={climate} history={history} loads={loads} />}
+            {tab === "home" && <HomeTab plan={plan} a={assessment ?? selected.assessment} request={request} />}
+            {tab === "evidence" && <EvidenceTab a={assessment ?? selected.assessment} airlineName={airline.name} climate={climate} history={history} loads={loads} live={liveStates} />}
           </div>
         </>
       )}
@@ -205,11 +222,20 @@ function PlanTab({ a, plan, destination, request, climate, isBest, best, onPick,
               <RouteDiagram origin={plan.primaryOut.origin} via={plan.primaryOut.via} destination={plan.primaryOut.destination} legDaily={plan.primaryOut.legDaily} />
             </div>
             <p style={{ margin: "14px 0 0", fontSize: 15 }}>
-              List for the <strong>first departure, around {formatTime(first.legs[0]!.depLocal.time)}</strong> from {getAirport(first.origin)?.city}. Arrive about {formatTime(first.legs[first.legs.length - 1]!.arrLocal.time)}
+              {first.legs[0]!.flight ? (
+                <>
+                  List for <strong>{first.legs[0]!.flight} at {formatTime(first.legs[0]!.depLocal.time)}</strong>, the first departure from {getAirport(first.origin)?.city}.
+                </>
+              ) : (
+                <>
+                  List for the <strong>first departure, around {formatTime(first.legs[0]!.depLocal.time)}</strong> from {getAirport(first.origin)?.city}.
+                </>
+              )}{" "}
+              Arrive {first.basis === "live" ? "" : "about "}{formatTime(first.legs[first.legs.length - 1]!.arrLocal.time)}
               {first.arrivesLaterDay ? " the next day" : ""} local time · {formatDuration(first.totalMin)}.
             </p>
             <p className="tiny" style={{ margin: "6px 0 0" }}>
-              <ScheduleSourceNote date={a.outboundDate} history={history} />
+              {first.legs[0]!.basis === "live" ? "From the published schedule (live). Confirm on aa.com before you go." : <ScheduleSourceNote date={a.outboundDate} history={history} />}
             </p>
           </>
         ) : (
@@ -478,7 +504,7 @@ function SeasonOverview({ destination, request, climate, engine }: { destination
 
 // ——— Routes
 
-function RoutesTab({ plan, a, history, loads }: { plan: TripPlan; a: TripAssessment; history?: FlightHistory; loads?: FlightLoads }) {
+function RoutesTab({ plan, a, history, loads, live }: { plan: TripPlan; a: TripAssessment; history?: FlightHistory; loads?: FlightLoads; live: { out: LiveState; back: LiveState } }) {
   const [dir, setDir] = useState<"out" | "back">("out");
   const paths = dir === "out" ? plan.outboundPaths : plan.returnPaths;
   const date = dir === "out" ? a.outboundDate : a.returnDate;
@@ -497,7 +523,7 @@ function RoutesTab({ plan, a, history, loads }: { plan: TripPlan; a: TripAssessm
         <div className="notice" style={{ marginTop: 12 }}>
           <Icon name="clock" size={18} />
           <span>
-            <ScheduleSourceNote date={date} history={history} /> Public seat maps wouldn’t show standby availability anyway.
+            <LiveNote state={dir === "out" ? live.out : live.back} /> <ScheduleSourceNote date={date} history={history} /> Public seat maps wouldn’t show standby availability anyway.
           </span>
         </div>
       </div>
@@ -508,6 +534,19 @@ function RoutesTab({ plan, a, history, loads }: { plan: TripPlan; a: TripAssessm
       {paths.length > 8 && <p className="tiny">{paths.length - 8} more routings with fewer practical options aren’t shown.</p>}
     </div>
   );
+}
+
+/** What the live schedule did for this direction: used, out of range, or not connected. */
+function LiveNote({ state }: { state: LiveState }) {
+  if (state.status === "ready")
+    return (
+      <>
+        Times marked <strong>live</strong> come from the published schedule for {state.day.airport} (AeroDataBox, fetched {formatTime(new Date(state.day.provenance.asOf ?? Date.now()).toTimeString().slice(0, 5))}), with flight numbers and current status.
+      </>
+    );
+  if (state.status === "unavailable" && state.reason === "unsupported") return <>{state.detail}</>;
+  if (state.status === "unavailable" && state.reason !== "not_configured") return <>Live schedule unavailable right now ({state.detail || state.reason}).</>;
+  return null;
 }
 
 /** Explains where departure times come from for a date: last year's records, or estimates. */
@@ -547,7 +586,13 @@ function PathCard({ p, recommended, history, loads }: { p: PathSummary; recommen
           <Icon name="clock" size={13} /> {formatDuration(p.typicalMin)} best total
         </span>
         <span>{sameDay.length} same-day option{sameDay.length === 1 ? "" : "s"}</span>
-        {p.basis === "historical" ? <Prov kind="historical" label={`As flown · ${history?.observedLabel(monthOf(p.options[0]!.legs[0]!.depLocal.date)) ?? "BTS"}`} /> : <Prov kind="estimate" label="Estimated times" />}
+        {p.basis === "live" ? (
+          <Prov kind="live" label="Live schedule" />
+        ) : p.basis === "historical" ? (
+          <Prov kind="historical" label={`As flown · ${history?.observedLabel(monthOf(p.options[0]!.legs[0]!.depLocal.date)) ?? "BTS"}`} />
+        ) : (
+          <Prov kind="estimate" label={p.options.some((o) => o.legs.some((l) => l.basis !== "estimate")) ? "Partly estimated" : "Estimated times"} />
+        )}
       </div>
       <div className="slots" style={{ marginTop: 10 }}>
         {p.options.map((o, i) => (
@@ -603,11 +648,21 @@ function LoadLines({ p, loads }: { p: PathSummary; loads?: FlightLoads }) {
 }
 
 function SlotChip({ it, first, last }: { it: Itinerary; first: boolean; last: boolean }) {
-  const t = formatTime(it.legs[0]!.depLocal.time);
+  const leg = it.legs[0]!;
+  const t = formatTime(leg.depLocal.time);
+  const title = it.overnightConnection
+    ? "Requires an overnight connection"
+    : leg.flight
+      ? `${it.legs.map((l) => l.flight ?? "").filter(Boolean).join(" + ")}${leg.status && leg.status !== "scheduled" ? ` · ${leg.status}` : ""}`
+      : it.basis === "historical"
+        ? "As flown in the same month of the BTS data"
+        : "Estimated time";
   return (
-    <span className={`slot ${first ? "first" : ""} ${last ? "last" : ""}`} title={it.overnightConnection ? "Requires an overnight connection" : it.basis === "historical" ? "As flown in the same month of the BTS data" : "Estimated time"}>
-      {it.basis === "historical" ? "" : "~"}
+    <span className={`slot ${first ? "first" : ""} ${last ? "last" : ""}`} title={title}>
+      {leg.basis === "estimate" ? "~" : ""}
       {t}
+      {leg.flight ? <span style={{ fontWeight: 500, opacity: 0.75 }}> {leg.flight.replace(" ", "")}</span> : null}
+      {leg.status === "delayed" ? " ⚠︎" : ""}
       {it.overnightConnection ? " ☾" : ""}
     </span>
   );
@@ -760,7 +815,7 @@ function HomeTab({ plan, a, request }: { plan: TripPlan; a: TripAssessment; requ
 const IMPACT_CLASS = { helps: "tone-good", neutral: "tone-ok", hurts: "tone-caution" } as const;
 const IMPACT_LABEL = { helps: "Helps", neutral: "Neutral", hurts: "Hurts" } as const;
 
-function EvidenceTab({ a, airlineName, climate, history, loads }: { a: TripAssessment; airlineName: string; climate: ClimateState; history?: FlightHistory; loads?: FlightLoads }) {
+function EvidenceTab({ a, airlineName, climate, history, loads, live }: { a: TripAssessment; airlineName: string; climate: ClimateState; history?: FlightHistory; loads?: FlightLoads; live: { out: LiveState; back: LiveState } }) {
   return (
     <div className="stack-lg">
       <section className="card" style={{ padding: 16 }}>
@@ -790,6 +845,18 @@ function EvidenceTab({ a, airlineName, climate, history, loads }: { a: TripAsses
           <li className="between">
             <span>Route network & frequencies</span>
             <Prov kind="reference" label="Reference · Oct 2026" />
+          </li>
+          <li className="between">
+            <span>Live schedule (leaving home / leaving {a.destAirports[0]})</span>
+            <span className="row" style={{ gap: 4 }}>
+              {[live.out, live.back].map((x, i) =>
+                x.status === "ready" ? (
+                  <Prov key={i} kind="live" label="Live" />
+                ) : (
+                  <Prov key={i} kind="unavailable" label={x.status === "loading" ? "Loading…" : x.status === "unavailable" && x.reason === "unsupported" ? "Out of range" : "Not connected"} />
+                ),
+              )}
+            </span>
           </li>
           <li className="between">
             <span>Departure times (US domestic)</span>
@@ -828,7 +895,7 @@ function EvidenceTab({ a, airlineName, climate, history, loads }: { a: TripAsses
             <Prov kind="unavailable" />
           </li>
           <li className="between">
-            <span>Live schedules, delays, fares</span>
+            <span>Public fares</span>
             <Prov kind="unavailable" />
           </li>
         </ul>

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { todayIn } from "@/lib/engine/time";
 import { createHistory, isHistoryFile, type FlightHistory } from "@/lib/providers/history";
 import { createLoads, isLoadsFile, type FlightLoads } from "@/lib/providers/loads";
+import type { LiveDay } from "@/lib/providers/live";
 
 /** Today's date in the device's zone, resolved after mount to avoid hydration mismatch. */
 export function useToday(): string | null {
@@ -11,7 +12,6 @@ export function useToday(): string | null {
   useEffect(() => setToday(todayIn()), []);
   return today;
 }
-
 
 export type DataState<T> = { status: "loading" } | { status: "ready"; data: T } | { status: "unavailable" };
 export type HistoryState = DataState<FlightHistory>;
@@ -59,4 +59,42 @@ export function useFlightHistory(): DataState<FlightHistory> {
 /** Historical load factors (BTS T-100), or `unavailable` (the factor is then omitted). */
 export function useFlightLoads(): DataState<FlightLoads> {
   return useStaticData("/data/aa-loads.json", acceptLoads);
+}
+
+export type LiveState = { status: "idle" } | { status: "loading" } | { status: "ready"; day: LiveDay } | { status: "unavailable"; reason: string; detail: string };
+
+const liveCache = new Map<string, Promise<LiveState>>();
+
+/**
+ * Live departures for one airport-day, via the server (the provider key never reaches the
+ * browser). Resolves to `unavailable` with the server's reason when no provider is connected,
+ * the date is outside the live horizon, or the provider fails, so the plan falls back cleanly.
+ */
+export function useLiveDay(airport: string | undefined, date: string | undefined, carrier = "AA"): LiveState {
+  const [state, setState] = useState<LiveState>({ status: "idle" });
+  useEffect(() => {
+    if (!airport || !date) {
+      setState({ status: "idle" });
+      return;
+    }
+    const key = `${carrier}|${airport}|${date}`;
+    let p = liveCache.get(key);
+    if (!p) {
+      p = fetch(`/api/flights/departures?${new URLSearchParams({ airport, date, carrier })}`)
+        .then(async (r): Promise<LiveState> => {
+          const body = (await r.json()) as { ok: boolean; data?: LiveDay["flights"]; provenance?: LiveDay["provenance"]; reason?: string; detail?: string };
+          if (body.ok && body.data && body.provenance) return { status: "ready", day: { airport, date, flights: body.data, provenance: body.provenance } };
+          return { status: "unavailable", reason: body.reason ?? "unavailable", detail: body.detail ?? "" };
+        })
+        .catch((): LiveState => ({ status: "unavailable", reason: "unavailable", detail: "Live schedule request failed." }));
+      liveCache.set(key, p);
+    }
+    let alive = true;
+    setState({ status: "loading" });
+    p.then((s) => alive && setState(s));
+    return () => {
+      alive = false;
+    };
+  }, [airport, date, carrier]);
+  return state;
 }

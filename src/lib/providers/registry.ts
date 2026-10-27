@@ -28,14 +28,14 @@ export function providerStatuses(env: Record<string, string | undefined> = proce
     },
     {
       id: "schedules",
-      label: "Live flight schedules & status",
-      provides: "Actual flight numbers, times, operating days, delays and cancellations",
-      state: env.AERODATABOX_API_KEY ? "not_available" : "not_configured",
+      label: "Live flight schedules & status (AeroDataBox)",
+      provides: "This year's published flight numbers, departure and arrival times, and day-of status",
+      state: env.AERODATABOX_API_KEY ? "connected" : "not_configured",
       detail: env.AERODATABOX_API_KEY
-        ? "A key is present, but this integration isn't implemented yet. STANDBY won't show live data until it is built and verified."
-        : "Not connected. The provider-independent layer (/api/flights/departures) is ready; the recommended first adapter is AeroDataBox. Without it, STANDBY uses last year's as-flown times (domestic) or estimates (international).",
-      requires: "AERODATABOX_API_KEY (future)",
-      costNote: "AeroDataBox from about $5/month for personal use; FlightAware AeroAPI pay-per-query.",
+        ? `Connected via ${env.AERODATABOX_MARKETPLACE?.toLowerCase() === "rapidapi" ? "RapidAPI" : "API.Market"}. Used on trip pages for the next ${Number(env.AERODATABOX_MAX_DAYS_AHEAD) || 30} days: departures from your home airport on the outbound date and from your destination on the return date. Other legs and dates use as-flown history or estimates, labeled as such. If a request fails, the trip page says so and falls back.`
+        : "Not connected. The adapter is built; add an AeroDataBox key to enable it. Until then STANDBY uses as-flown history (domestic) or estimates (international).",
+      requires: env.AERODATABOX_API_KEY ? undefined : "AERODATABOX_API_KEY (+ AERODATABOX_MARKETPLACE=apimarket|rapidapi)",
+      costNote: "AeroDataBox Pro ≈ $5/mo on API.Market; RapidAPI has a small free tier. Each trip page uses up to 4 calls, cached.",
     },
     {
       id: "fares",

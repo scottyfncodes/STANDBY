@@ -23,7 +23,8 @@ STANDBY never shows a percentage chance of clearing. Without validated standby o
 | US DOT BTS T-100 segment data (`public/data/aa-loads.json`) | Historical, free | Monthly load factors (passengers ÷ seats) for AA-operated nonstop routes, domestic and international. Shown only as historical context — never as current seat availability. |
 | Open-Meteo historical weather (`/api/climate`) | Live, no key | 2021–2025 daily data averaged by month, cached 30 days, falls back to bundled normals. |
 | Holiday & demand calendar (`src/lib/engine/calendar.ts`) | Computed | Exact US holidays; demand effects, school breaks and events are labeled general patterns. |
-| Live schedules / status, public fares | Not connected | Provider-independent layer in `src/lib/flightdata/` and `/api/flights/departures`; returns an explicit "not configured". See `docs/FLIGHT_DATA.md`. |
+| Live schedules / status (AeroDataBox) | Live, when `AERODATABOX_API_KEY` is set | Trip pages only, at most 4 cached calls per view; without a key the app falls back to history/reference. Not seat or load data. See `docs/FLIGHT_DATA.md`. |
+| Public fares | Not connected | — |
 | AA standby loads & priority lists | Not available | Only in authorized employee systems. No credential collection or scraping. |
 
 ## Architecture
