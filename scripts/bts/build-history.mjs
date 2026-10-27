@@ -16,7 +16,13 @@ import { createInterface } from "node:readline";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import path from "node:path";
 
-const [from = "2025-06", to = "2026-05", out = "public/data/aa-history.json"] = process.argv.slice(2);
+const positional = process.argv.slice(2).filter((a) => !a.startsWith("--"));
+const flags = new Set(process.argv.slice(2).filter((a) => a.startsWith("--")));
+const [from = "2025-06", to = "2026-05", out = "public/data/aa-history.json"] = positional;
+/** Fail instead of publishing a dataset with missing months. */
+const STRICT = flags.has("--strict");
+/** Minimum routes for a plausible AA dataset (the full network yields ~800). */
+const MIN_ROUTES = flags.has("--no-validate") ? 0 : 400;
 const TMP = process.env.RUNNER_TEMP ?? "/tmp";
 
 // Only keep routes between airports STANDBY knows about.
@@ -134,7 +140,9 @@ async function processFile(zip, kind, y, m) {
     if (!mo) r.monthly.set(ym, (mo = { y, m, times: new Map() }));
     const date = f[idx.date];
     const crs = f[idx.crsDep].padStart(4, "0");
-    const t = `${crs.slice(0, 2) === "24" ? "00" : crs.slice(0, 2)}:${crs.slice(2, 4)}`;
+    // BTS writes midnight at the end of the flight date as 2400; keep it on that date.
+    const t = crs === "2400" ? "23:59" : `${crs.slice(0, 2)}:${crs.slice(2, 4)}`;
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(t)) continue;
     if (!mo.times.has(t)) mo.times.set(t, new Set());
     mo.times.get(t).add(date);
 
@@ -149,7 +157,12 @@ async function processFile(zip, kind, y, m) {
     else if (Number(f[idx.diverted]) === 1) rel.diverted++;
     else {
       rel.completed++;
-      const delay = Number(f[idx.arrDelay]);
+      const raw = f[idx.arrDelay];
+      if (raw === "" || raw === undefined) {
+        rel.completed--; // no arrival delay reported; leave out of lateness shares
+        continue;
+      }
+      const delay = Number(raw);
       if (delay >= 15) rel.late15++;
       if (delay >= 30) rel.late30++;
       if (delay >= 60) rel.late60++;
@@ -188,12 +201,6 @@ export function mergeShiftedTimes(timeMap) {
   return clusters.map((c) => [c.best, c.dates]).sort(([a], [b]) => a.localeCompare(b));
 }
 
-function datesByDow(y, m) {
-  const counts = [0, 0, 0, 0, 0, 0, 0];
-  const days = new Date(Date.UTC(y, m, 0)).getUTCDate();
-  for (let d = 1; d <= days; d++) counts[new Date(Date.UTC(y, m - 1, d)).getUTCDay()]++;
-  return counts;
-}
 
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) await main();
@@ -220,6 +227,10 @@ for (const [y, m] of months(from, to)) {
   if (!ok) failed.push(`${y}-${m}`);
 }
 
+if (STRICT && failed.length) {
+  console.error(`Strict mode: ${failed.length} month(s) could not be processed (${failed.join(", ")}). Not publishing a partial dataset.`);
+  process.exit(1);
+}
 if (!used.length) {
   console.error("No BTS months could be processed.");
   process.exit(1);
@@ -236,14 +247,23 @@ for (const [key, r] of routes) {
     if (!cur || mo.y > cur.y) latest.set(mo.m, mo);
   }
   for (const [mNum, mo] of latest) {
-    const dowTotals = datesByDow(mo.y, mo.m);
     const clusters = mergeShiftedTimes(mo.times);
     // Median flights per day for each weekday (dates with no flights count as zero).
     const perDate = new Map();
     for (const dates of mo.times.values()) for (const ds of dates) perDate.set(ds, (perDate.get(ds) ?? 0) + 1);
     const byDow = [[], [], [], [], [], [], []];
     const days = new Date(Date.UTC(mo.y, mo.m, 0)).getUTCDate();
-    for (let d = 1; d <= days; d++) {
+    // Seasonal starts/ends: the operating span when the route didn't fly the whole month.
+    let first = 99;
+    let last = 0;
+    for (const ds of perDate.keys()) {
+      const dom = Number(ds.slice(8, 10));
+      first = Math.min(first, dom);
+      last = Math.max(last, dom);
+    }
+    const span = first > 3 || last < days - 2 ? [first, last] : undefined;
+    // Typical flights per weekday, counted only on dates inside the operating span.
+    for (let d = first; d <= last; d++) {
       const ds = `${mo.y}-${String(mo.m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
       byDow[new Date(`${ds}T00:00:00Z`).getUTCDay()].push(perDate.get(ds) ?? 0);
     }
@@ -252,15 +272,16 @@ for (const [key, r] of routes) {
       return s.length ? s[Math.floor((s.length - 1) / 2)] : 0;
     };
     const n = byDow.map(median);
+    const spanDow = byDow.map((xs) => xs.length);
     const times = [];
     for (const [t, dates] of clusters) {
       const perDow = [0, 0, 0, 0, 0, 0, 0];
       for (const ds of dates) perDow[new Date(`${ds}T00:00:00Z`).getUTCDay()]++;
-      const shares = perDow.map((c, i) => c / dowTotals[i]);
+      const shares = perDow.map((c, i) => (spanDow[i] ? c / spanDow[i] : 0));
       if (Math.max(...shares) < 0.25) continue; // one-off or irregular
       times.push([t, shares.map((s) => Math.min(9, Math.round(s * 9))).join("")]);
     }
-    if (times.length) monthsOut[mNum] = { y: mo.y, n, t: times };
+    if (times.length) monthsOut[mNum] = span ? { y: mo.y, n, s: span, t: times } : { y: mo.y, n, t: times };
   }
   if (!Object.keys(monthsOut).length) continue;
   const rel = r.rel;
@@ -283,6 +304,22 @@ const result = {
   routes: outRoutes,
 };
 mkdirSync(path.dirname(out), { recursive: true });
+const routeCount = Object.keys(outRoutes).length;
+let previous;
+try {
+  previous = JSON.parse(readFileSync(out, "utf8"));
+} catch {
+  previous = undefined;
+}
+const prevCount = previous ? Object.keys(previous.routes ?? {}).length : 0;
+if (routeCount < MIN_ROUTES || (MIN_ROUTES && prevCount && routeCount < prevCount * 0.8 && !flags.has("--allow-shrink"))) {
+  console.error(`Validation failed: ${routeCount} routes (previous ${prevCount}, minimum ${MIN_ROUTES}). Not publishing.`);
+  process.exit(1);
+}
+// Keep the previous timestamp when nothing but the timestamp would change, so reruns don't commit noise.
+if (previous && JSON.stringify({ ...previous.meta, generatedAt: "" }) === JSON.stringify({ ...result.meta, generatedAt: "" }) && JSON.stringify(previous.routes) === JSON.stringify(result.routes)) {
+  result.meta.generatedAt = previous.meta.generatedAt;
+}
 writeFileSync(out, JSON.stringify(result));
-console.log(`Wrote ${out}: ${Object.keys(outRoutes).length} routes from ${used.length} months (${failed.length} failed).`);
+console.log(`Wrote ${out}: ${routeCount} routes (previous ${prevCount}) from ${used.length} months (${failed.length} failed).`);
 }

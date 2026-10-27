@@ -24,9 +24,10 @@ export interface HistoryFile {
       b: number | null;
       /**
        * Calendar month (1–12) → year observed, median flights per day by weekday (Sun..Sat),
-       * and [local time, weekday shares Sun..Sat as digits 0–9].
+       * the operating day-of-month span when the route only flew part of the month (seasonal
+       * start/end), and [local time, weekday shares Sun..Sat as digits 0–9].
        */
-      m: Record<string, { y: number; n?: number[]; t: [LocalTime, string][] }>;
+      m: Record<string, { y: number; n?: number[]; s?: [number, number]; t: [LocalTime, string][] }>;
       r: RouteReliability;
     }
   >;
@@ -98,6 +99,9 @@ export function createHistory(file: HistoryFile): FlightHistory {
         if (!complete || !year) return undefined;
         return { times: [], blockMin: r.b, observed: { year, month } };
       }
+      // Outside last year's operating span this month (seasonal start or end): no service.
+      const dom = Number(date.slice(8, 10));
+      if (mo.s && complete && (dom < mo.s[0] || dom > mo.s[1])) return { times: [], blockMin: r.b, observed: { year: mo.y, month } };
       const dow = weekday(date);
       const count = mo.n?.[dow];
       const times =

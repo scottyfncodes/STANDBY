@@ -1,52 +1,106 @@
 name: Refresh BTS flight history
 
-# Rebuilds public/data/aa-history.json from free, public-domain US DOT/BTS on-time data
-# and commits it to the chosen branch. Never touches production settings or secrets.
+# Rebuilds public/data/aa-history.json (and the T-100 load-factor file) from free,
+# public-domain US DOT/BTS data.
+#
+# Safety rules:
+# - Never pushes to main. Refreshes land on a data/bts-refresh-* branch with a PR for review.
+# - Strict: a missing month or an implausibly small dataset fails the job; nothing is published.
+# - Every run writes a job summary saying what happened, including "no new data".
 on:
-  # Also runs when the pipeline itself changes on a feature branch, so it can be
-  # reviewed in a PR before it ever reaches main.
-  push:
-    branches-ignore: [main]
-    paths: [scripts/bts/**]
+  schedule:
+    - cron: "17 9 12 * *" # monthly; BTS publishes on-time data roughly two months after month end
   workflow_dispatch:
     inputs:
-      branch:
-        description: Branch to commit the refreshed dataset to
+      mode:
+        description: "latest = roll forward if BTS published new months; rebuild = rebuild the current window"
         required: true
-        default: main
-      from:
-        description: First month (YYYY-MM)
-        required: true
-        default: "2025-06"
-      to:
-        description: Last month (YYYY-MM)
-        required: true
-        default: "2026-05"
+        default: latest
+        type: choice
+        options: [latest, rebuild]
+  # Pipeline changes on a feature branch rebuild the data on that branch for review.
+  push:
+    branches-ignore: [main, "data/**"]
+    paths: [scripts/bts/*.mjs]
 
 permissions:
   contents: write
+  pull-requests: write
+
+concurrency:
+  group: bts-history-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  build:
+  refresh:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.branch || github.ref_name }}
+          ref: ${{ github.ref_name }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Build dataset
-        run: node scripts/bts/build-history.mjs "${{ inputs.from || '2025-06' }}" "${{ inputs.to || '2026-05' }}" public/data/aa-history.json
-      - name: Commit dataset
+
+      - name: Decide what to build
+        id: plan
+        run: |
+          MODE="${{ github.event_name == 'push' && 'rebuild' || inputs.mode || 'latest' }}"
+          node scripts/bts/plan-refresh.mjs --mode "$MODE" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Report when there is nothing new
+        if: steps.plan.outputs.changed != 'true'
+        run: |
+          {
+            echo "## BTS refresh: no change"
+            echo ""
+            echo "- ${{ steps.plan.outputs.reason }}"
+            echo "- Dataset currently ends: ${{ steps.plan.outputs.latest }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ steps.plan.outputs.error }}" = "true" ]; then
+            echo "::error::${{ steps.plan.outputs.reason }}"
+            exit 1
+          fi
+
+      - name: Build on-time history (strict)
+        if: steps.plan.outputs.changed == 'true'
+        run: node scripts/bts/build-history.mjs "${{ steps.plan.outputs.from }}" "${{ steps.plan.outputs.to }}" public/data/aa-history.json --strict
+
+      - name: Build T-100 load factors (strict)
+        if: steps.plan.outputs.changed == 'true'
+        run: node scripts/bts/build-loads.mjs --to "${{ steps.plan.outputs.to }}" --out public/data/aa-loads.json --strict
+
+      - name: Commit and publish for review
+        if: steps.plan.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add public/data/aa-history.json
-          if git diff --cached --quiet; then echo "No changes"; exit 0; fi
-          ls -la public/data/aa-history.json
-          git commit -m "Refresh BTS flight history"
-          # Another push may have landed while this ran; replay the data commit on top.
-          git pull --rebase origin ${{ inputs.branch || github.ref_name }}
-          git push origin HEAD:${{ inputs.branch || github.ref_name }}
+          git add public/data/aa-history.json public/data/aa-loads.json
+          SUMMARY="## BTS refresh: ${{ steps.plan.outputs.reason }}"
+          if git diff --cached --quiet; then
+            printf '%s\n\nRebuilt %s..%s; output identical to the committed data.\n' "$SUMMARY" "${{ steps.plan.outputs.from }}" "${{ steps.plan.outputs.to }}" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          git commit -m "Refresh BTS data (${{ steps.plan.outputs.from }}..${{ steps.plan.outputs.to }})"
+          if [ "${{ github.event_name }}" = "push" ]; then
+            # Feature branch: commit back to the same branch, replaying on top of any newer push.
+            git pull --rebase origin "${{ github.ref_name }}"
+            git push origin "HEAD:${{ github.ref_name }}"
+            printf '%s\n\nCommitted to `%s`.\n' "$SUMMARY" "${{ github.ref_name }}" >> "$GITHUB_STEP_SUMMARY"
+          else
+            # Scheduled/manual: never touch main directly. Publish a branch and open a PR.
+            BRANCH="data/bts-refresh-${{ steps.plan.outputs.to }}"
+            git push --force-with-lease origin "HEAD:refs/heads/$BRANCH"
+            if gh pr create --base main --head "$BRANCH" --title "Refresh BTS data through ${{ steps.plan.outputs.to }}" \
+                 --body "Automated refresh (${{ steps.plan.outputs.from }}..${{ steps.plan.outputs.to }}). Review the preview before merging." 2>pr.err; then
+              printf '%s\n\nOpened a PR from `%s`.\n' "$SUMMARY" "$BRANCH" >> "$GITHUB_STEP_SUMMARY"
+            else
+              # Repos that disallow Actions-created PRs still get the branch; say so plainly.
+              printf '%s\n\nPushed `%s` but could not open a PR (%s). Open one from: %s/compare/main...%s\n' \
+                "$SUMMARY" "$BRANCH" "$(head -c 200 pr.err)" "${{ github.server_url }}/${{ github.repository }}" "$BRANCH" >> "$GITHUB_STEP_SUMMARY"
+              echo "::warning::Branch $BRANCH pushed; PR must be opened manually."
+            fi
+          fi

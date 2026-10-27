@@ -108,6 +108,9 @@ export function assessTrip(input: AssessInput): TripAssessment {
   const servedOrigins = origins.filter((o) => airline.network.serves(o));
   const base = { outbound, inbound, recovery, demandOut, demandBack, party: partyA, slackDays, origins, destAirports, homeAirports, outboundDate, returnDate };
 
+  if (slackDays !== null && slackDays < 0) {
+    return { ...base, tier: "unavailable", rank: 0, headline: "This return date is after your deadline.", factors: [], risks: [] };
+  }
   if (!servedOrigins.length || !destAirports.some((d) => airline.network.serves(d))) {
     return { ...base, tier: "insufficient", rank: 0, headline: `${airline.name} reference data doesn't cover this airport pair.`, factors: [], risks: [] };
   }
