@@ -579,6 +579,11 @@ details.disclosure > summary::-webkit-details-marker {
   white-space: nowrap;
 }
 
+.prov.hist {
+  color: var(--ok);
+  border: 1px solid rgba(47, 95, 158, 0.35);
+}
+
 .prov.live {
   color: var(--good);
   border: 1px solid rgba(31, 122, 92, 0.35);

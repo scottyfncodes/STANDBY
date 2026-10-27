@@ -13,6 +13,7 @@ export function TierBadge({ tier, short = false }: { tier: Tier; short?: boolean
 
 const PROV_LABEL: Record<ProvenanceKind, string> = {
   live: "Live",
+  historical: "Historical",
   reference: "Reference data",
   estimate: "Estimate",
   user: "Your input",
@@ -20,7 +21,7 @@ const PROV_LABEL: Record<ProvenanceKind, string> = {
 };
 
 export function Prov({ kind, label }: { kind: ProvenanceKind; label?: string }) {
-  return <span className={`prov ${kind === "live" ? "live" : ""}`}>{label ?? PROV_LABEL[kind]}</span>;
+  return <span className={`prov ${kind === "live" ? "live" : kind === "historical" ? "hist" : ""}`}>{label ?? PROV_LABEL[kind]}</span>;
 }
 
 /** Deterministic pseudo-random from a string, for stable artwork. */

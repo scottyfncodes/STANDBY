@@ -4,8 +4,9 @@ import type { Destination } from "@/lib/data/destinations";
 import type { AirportCode, DataProvenance, ISODate, RiskTolerance, TripRequest } from "@/lib/domain/types";
 import { assessParty, type Party, type PartyAssessment } from "@/lib/eligibility/party";
 import { assessDemand, type DemandAssessment, type DemandLevel } from "./calendar";
-import { dayOptions, type DayOptions, type ItineraryEngine } from "./itinerary";
-import { addDays, diffDays } from "./time";
+import { arrivingBy, dayOptions, summarizePaths, type DayOptions, type ItineraryEngine } from "./itinerary";
+import { addDays, diffDays, monthOf } from "./time";
+import { loadBand } from "@/lib/providers/loads";
 
 export type Tier = "flexible" | "workable" | "limited" | "high-risk" | "unavailable" | "insufficient";
 
@@ -90,11 +91,16 @@ export function assessTrip(input: AssessInput): TripAssessment {
   const allowConn = request.complexity !== "nonstop";
 
   const outbound = dayOptions(engine, origins, destAirports, outboundDate, allowConn);
-  const inbound = dayOptions(engine, destAirports, homeAirports, returnDate, allowConn);
   const slackDays = request.homeBy ? diffDays(returnDate, request.homeBy) : null;
+  // Attempts home only count if they land by the end of the deadline day.
+  const homeDay = (date: ISODate, dests: AirportCode[]) => {
+    const d = dayOptions(engine, dests, homeAirports, date, allowConn);
+    return request.homeBy ? arrivingBy(d, request.homeBy) : d;
+  };
+  const inbound = homeDay(returnDate, destAirports);
   const recoveryDays = slackDays === null ? 2 : Math.max(0, Math.min(slackDays, 4));
   const recovery = [inbound];
-  for (let i = 1; i <= recoveryDays; i++) recovery.push(dayOptions(engine, destAirports, homeAirports, addDays(returnDate, i), allowConn));
+  for (let i = 1; i <= recoveryDays; i++) recovery.push(homeDay(addDays(returnDate, i), destAirports));
 
   const demandOut = assessDemand(outboundDate, destination);
   const demandBack = assessDemand(returnDate, destination);
@@ -103,6 +109,9 @@ export function assessTrip(input: AssessInput): TripAssessment {
   const servedOrigins = origins.filter((o) => airline.network.serves(o));
   const base = { outbound, inbound, recovery, demandOut, demandBack, party: partyA, slackDays, origins, destAirports, homeAirports, outboundDate, returnDate };
 
+  if (slackDays !== null && slackDays < 0) {
+    return { ...base, tier: "unavailable", rank: 0, headline: "This return date is after your deadline.", factors: [], risks: [] };
+  }
   if (!servedOrigins.length || !destAirports.some((d) => airline.network.serves(d))) {
     return { ...base, tier: "insufficient", rank: 0, headline: `${airline.name} reference data doesn't cover this airport pair.`, factors: [], risks: [] };
   }
@@ -121,11 +130,13 @@ export function assessTrip(input: AssessInput): TripAssessment {
   // Alternate arrival airports count, but at a discount: they add ground transfer and complexity.
   const primaryDest = destAirports[0]!;
   const outPrimary = dayOptions(engine, origins, [primaryDest], outboundDate, allowConn);
-  const inPrimary = dayOptions(engine, [primaryDest], homeAirports, returnDate, allowConn);
+  const inPrimary = homeDay(returnDate, [primaryDest]);
   const effOut = outPrimary.depth + ALT_AIRPORT_WEIGHT * (outbound.depth - outPrimary.depth);
   const effIn = inPrimary.depth + ALT_AIRPORT_WEIGHT * (inbound.depth - inPrimary.depth);
   const altNote = (all: number, primary: number) =>
     all > primary ? ` (${primary} at ${primaryDest}, ${all - primary} more via alternate airports)` : "";
+
+  const scheduleBasis = (d: DayOptions): Factor["basis"] => (d.itineraries.length && d.itineraries.every((i) => i.basis === "historical") ? "historical" : "reference");
 
   const factors: Factor[] = [];
   const impact = (s: number): Impact => (s >= 0.66 ? "helps" : s >= 0.4 ? "neutral" : "hurts");
@@ -138,7 +149,7 @@ export function assessTrip(input: AssessInput): TripAssessment {
     detail: `About ${outbound.depth} flight${outbound.depth === 1 ? "" : "s"} into ${destName} you could try for on departure day${altNote(outbound.depth, outPrimary.depth)}${outbound.hubs.length ? `, via ${outbound.hubs.length} hub${outbound.hubs.length === 1 ? "" : "s"}` : ""}.`,
     score: depthScore(effOut),
     weight: 0.2,
-    basis: "reference",
+    basis: scheduleBasis(outbound),
   });
   add({
     key: "return-depth",
@@ -146,7 +157,7 @@ export function assessTrip(input: AssessInput): TripAssessment {
     detail: `About ${inbound.depth} flight${inbound.depth === 1 ? "" : "s"} home you could try for on return day${altNote(inbound.depth, inPrimary.depth)}.`,
     score: depthScore(effIn),
     weight: 0.2,
-    basis: "reference",
+    basis: scheduleBasis(inbound),
   });
 
   // The best path's thinnest leg, taking the worse of the two directions.
@@ -176,7 +187,9 @@ export function assessTrip(input: AssessInput): TripAssessment {
       detail:
         slackDays === 0
           ? `You return on your deadline day, so only that day's ${inbound.depth} attempt${inbound.depth === 1 ? "" : "s"} remain.`
-          : `${slackDays} spare day${slackDays === 1 ? "" : "s"} before your deadline — about ${recoveryAttempts} more attempts home in the ${recoveryDays === 1 ? "next day" : `next ${recoveryDays} days`} alone.`,
+          : recoveryAttempts === 0
+            ? `${slackDays} spare day${slackDays === 1 ? "" : "s"} before your deadline, but no later flights land in time — only return-day attempts count.`
+            : `${slackDays} spare day${slackDays === 1 ? "" : "s"} before your deadline — about ${recoveryAttempts} more attempts home in the ${recoveryDays === 1 ? "next day" : `next ${recoveryDays} days`} alone.`,
       score: s,
       weight: 0.18,
       basis: "user",
@@ -194,6 +207,33 @@ export function assessTrip(input: AssessInput): TripAssessment {
     basis: "estimate",
   });
 
+  // Historical load factors on the most practical routing each way (context, not availability).
+  const loads = engine.loads;
+  const fullestLeg = (d: DayOptions) => {
+    const best = summarizePaths(d).find((p) => p.options.some((o) => !o.overnightConnection));
+    const it = best?.options.find((o) => !o.overnightConnection);
+    if (!loads || !it) return undefined;
+    const legs = it.legs.map((l) => ({ l, load: loads.route(l.from, l.to, monthOf(l.depLocal.date)) }));
+    if (legs.some((x) => !x.load)) return undefined; // partial evidence would understate the risk
+    return legs.sort((a, b) => b.load!.loadFactor - a.load!.loadFactor)[0];
+  };
+  const loadOut = fullestLeg(outPrimary);
+  const loadBack = fullestLeg(inPrimary);
+  if (loads && (loadOut || loadBack)) {
+    const score = (lf: number) => ({ roomier: 0.9, typical: 0.65, full: 0.4, "very-full": 0.2 })[loadBand(lf)];
+    const parts = [loadOut && `going, ${loadOut.l.from}→${loadOut.l.to} averaged ${Math.round(loadOut.load!.loadFactor)}% full`, loadBack && `coming home, ${loadBack.l.from}→${loadBack.l.to} averaged ${Math.round(loadBack.load!.loadFactor)}%`].filter(Boolean);
+    const observed = loads.label((loadOut ?? loadBack)!.load!);
+    const scores = [loadOut, loadBack].filter(Boolean).map((x) => score(x!.load!.loadFactor));
+    add({
+      key: "loads",
+      label: "How full flights ran",
+      detail: `In ${observed}, ${parts.join("; ")} (BTS T-100 monthly averages). Historical context only — not today's open seats.`,
+      score: scores.reduce((a, b) => a + b, 0) / scores.length,
+      weight: 0.1,
+      basis: "historical",
+    });
+  }
+
   add({
     key: "party",
     label: "Your party",
@@ -206,16 +246,22 @@ export function assessTrip(input: AssessInput): TripAssessment {
     basis: partyA.prioritiesKnown ? "user" : "unavailable",
   });
 
-  const hasNonstop = outbound.nonstopCount > 0 && inbound.nonstopCount > 0;
+  // Judge connections at the primary airport; a nonstop to an alternate airport isn't the trip.
+  const hasNonstop = outPrimary.nonstopCount > 0 && inPrimary.nonstopCount > 0;
+  // Misconnect evidence for the most practical connecting path, when history is available.
+  const bestConn = hasNonstop ? undefined : [...summarizePaths(outPrimary), ...summarizePaths(inPrimary)].find((p) => p.via && p.connectionRisk)?.connectionRisk;
+  const connScore = hasNonstop ? 1 : (outPrimary.hubs.length >= 2 ? 0.6 : 0.4) - (bestConn ? Math.min(bestConn.lateShare, 40) / 200 : 0);
   add({
     key: "connections",
     label: "Connections",
     detail: hasNonstop
       ? "Nonstop service both ways — no connection to misconnect or get stranded at."
-      : `Requires a connection${outbound.hubs.length ? ` (${outbound.hubs.slice(0, 3).join(", ")})` : ""}; each one is another standby list.`,
-    score: hasNonstop ? 1 : outbound.hubs.length >= 2 ? 0.6 : 0.4,
+      : `${primaryDest} needs a connection${outPrimary.hubs.length ? ` (${outPrimary.hubs.slice(0, 3).join(", ")})` : ""}; each one is another standby list.${
+          bestConn ? ` Historically ${bestConn.lateShare}% of first legs arrived ${bestConn.thresholdMin}+ min late.` : ""
+        }`,
+    score: Math.max(0.1, connScore),
     weight: 0.08,
-    basis: "reference",
+    basis: bestConn ? "historical" : "reference",
   });
 
   let rank = factors.reduce((s, f) => s + f.score * f.weight, 0) / factors.reduce((s, f) => s + f.weight, 0);
@@ -226,7 +272,10 @@ export function assessTrip(input: AssessInput): TripAssessment {
   if (inbound.depth <= 1 && (slackDays ?? 1) === 0) tier = "high-risk";
   if (tier === "high-risk") rank = Math.min(rank, 0.45);
 
-  const risks = collectRisks({ outbound, inbound, slackDays, weakest, demandOut, demandBack, partyA });
+  const risks = collectRisks({ outbound, inbound, outPrimary, inPrimary, slackDays, weakest, demandOut, demandBack, partyA });
+  const fullest = [loadOut, loadBack].filter(Boolean).sort((a, b) => b!.load!.loadFactor - a!.load!.loadFactor)[0];
+  if (fullest && fullest.load!.loadFactor >= 90 && loads)
+    risks.push(`${fullest.l.from}→${fullest.l.to} averaged ${Math.round(fullest.load!.loadFactor)}% full in ${loads.label(fullest.load!)} — historically few empty seats for standby.`);
   const top = factors.filter((f) => f.impact === "helps").sort((a, b) => b.score * b.weight - a.score * a.weight)[0];
   const low = factors.filter((f) => f.impact === "hurts").sort((a, b) => a.score * a.weight - b.score * b.weight)[0];
   const headline = [top?.detail, low ? `Watch: ${low.detail.charAt(0).toLowerCase()}${low.detail.slice(1)}` : undefined].filter(Boolean).join(" ");
@@ -242,6 +291,8 @@ function worse(a: Tier, b: Tier): Tier {
 function collectRisks(x: {
   outbound: DayOptions;
   inbound: DayOptions;
+  outPrimary: DayOptions;
+  inPrimary: DayOptions;
   slackDays: number | null;
   weakest: number;
   demandOut: DemandAssessment;
@@ -258,7 +309,7 @@ function collectRisks(x: {
   };
   if (x.inbound.depth <= 2) risks.push("Very few flights home on return day — the last flight of the day is a real cliff.");
   if (x.slackDays === 0) risks.push("No buffer: if the return doesn't clear, you miss your deadline.");
-  if ((reliesOnConnections(x.outbound) && x.outbound.overnightExposure) || (reliesOnConnections(x.inbound) && x.inbound.overnightExposure))
+  if ((reliesOnConnections(x.outPrimary) && x.outPrimary.overnightExposure) || (reliesOnConnections(x.inPrimary) && x.inPrimary.overnightExposure))
     risks.push("Late connections can leave you overnight at a hub if you don't clear the second flight.");
   if (mostlyOvernight(x.outbound) || mostlyOvernight(x.inbound)) risks.push("Overnight or long-haul flights — a missed departure often means waiting until the next day's flight.");
   if (x.weakest <= 1 && x.inbound.depth > 2) risks.push("The best routing includes a once-a-day flight.");

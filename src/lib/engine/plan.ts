@@ -2,7 +2,7 @@ import { getAirport } from "@/lib/data/airports";
 import type { Destination } from "@/lib/data/destinations";
 import type { AirportCode, ISODate, TripRequest } from "@/lib/domain/types";
 import { RESERVE_ATTEMPTS, type TripAssessment } from "./assess";
-import { dayOptions, summarizePaths, type DayOptions, type Itinerary, type ItineraryEngine, type PathSummary } from "./itinerary";
+import { arrivingBy, dayOptions, summarizePaths, type DayOptions, type Itinerary, type ItineraryEngine, type PathSummary } from "./itinerary";
 import { addDays, formatDate, formatTime } from "./time";
 
 export type FallbackKind =
@@ -54,6 +54,7 @@ export interface TripPlan {
   sequence: string[];
 }
 
+const byDeadline = (d: DayOptions, deadline?: ISODate) => (deadline ? arrivingBy(d, deadline) : d);
 const city = (code: AirportCode) => getAirport(code)?.city ?? code;
 const sameDay = (p: PathSummary) => p.options.filter((o) => !o.overnightConnection);
 const pathLabel = (p: PathSummary) => (p.via ? `${p.origin} → ${p.via} → ${p.destination}` : `${p.origin} → ${p.destination} nonstop`);
@@ -74,6 +75,8 @@ export function buildFallbacks(args: {
   extraDestAirports: AirportCode[];
   allowConnections: boolean;
   nextDayAllowed: boolean;
+  /** For the trip home: only count attempts that land by the end of this date. */
+  arriveBy?: ISODate;
   nextDayNote: string;
   originsForAlternates: AirportCode[];
 }): FallbackOption[] {
@@ -123,7 +126,7 @@ export function buildFallbacks(args: {
   }
   if (!byOrigin.size && args.originsForAlternates.length) {
     const alts = args.originsForAlternates.filter((o) => !primaryOrigins.includes(o));
-    const d = dayOptions(engine, alts, args.destAirports, day.date, args.allowConnections);
+    const d = byDeadline(dayOptions(engine, alts, args.destAirports, day.date, args.allowConnections), args.arriveBy);
     if (d.depth) {
       out.push({
         kind: "alt-origin",
@@ -138,7 +141,7 @@ export function buildFallbacks(args: {
 
   // 4. Alternate destination airport.
   for (const alt of args.extraDestAirports) {
-    const d = dayOptions(engine, primaryOrigins, [alt], day.date, args.allowConnections);
+    const d = byDeadline(dayOptions(engine, primaryOrigins, [alt], day.date, args.allowConnections), args.arriveBy);
     if (!d.depth) continue;
     const enabled = args.destAirports.includes(alt);
     out.push({
@@ -169,8 +172,19 @@ export function buildFallbacks(args: {
   }
 
   // 6. Next day.
-  const next = dayOptions(engine, args.originsForAlternates.length ? args.originsForAlternates : primaryOrigins, args.destAirports, addDays(day.date, 1), args.allowConnections);
-  if (next.depth) {
+  const nextRaw = dayOptions(engine, args.originsForAlternates.length ? args.originsForAlternates : primaryOrigins, args.destAirports, addDays(day.date, 1), args.allowConnections);
+  // When the next day is still allowed, only count flights that land in time; otherwise keep the
+  // raw count so the option can explain that it would miss the deadline.
+  const next = args.nextDayAllowed ? byDeadline(nextRaw, args.arriveBy) : nextRaw;
+  if (args.nextDayAllowed && args.arriveBy && !next.depth && nextRaw.depth) {
+    out.push({
+      kind: "next-day",
+      title: `${formatDate(nextRaw.date)} won't get you home in time`,
+      detail: `There are flights that day, but none land by the end of your deadline (${formatDate(args.arriveBy)}).`,
+      score: 1,
+      tone: "caution",
+    });
+  } else if (next.depth) {
     out.push({
       kind: "next-day",
       title: `Try again ${formatDate(next.date)}`,
@@ -225,8 +239,14 @@ export function buildPlan(args: {
 }): TripPlan {
   const { engine, assessment: a, destination, request } = args;
   const allowConn = request.complexity !== "nonstop";
-  const outboundPaths = summarizePaths(a.outbound);
-  const returnPaths = summarizePaths(a.inbound);
+  // Routings to/from the primary destination airport come first; alternates are backups.
+  const primaryDest = a.destAirports[0];
+  const primaryFirst = (paths: PathSummary[], end: "origin" | "destination") => [
+    ...paths.filter((p) => p[end] === primaryDest && sameDay(p).length),
+    ...paths.filter((p) => !(p[end] === primaryDest && sameDay(p).length)),
+  ];
+  const outboundPaths = primaryFirst(summarizePaths(a.outbound), "destination");
+  const returnPaths = primaryFirst(summarizePaths(a.inbound), "origin");
   const primaryOrigin = request.origins[0];
   const primaryOut = outboundPaths.find((p) => p.origin === primaryOrigin && sameDay(p).length) ?? outboundPaths.find((p) => sameDay(p).length);
   const primaryBack = returnPaths.find((p) => p.destination === primaryOut?.origin && sameDay(p).length) ?? returnPaths.find((p) => sameDay(p).length);
@@ -258,6 +278,7 @@ export function buildPlan(args: {
     extraDestAirports: [],
     allowConnections: allowConn,
     nextDayAllowed: slack === null || slack >= 1,
+    arriveBy: request.homeBy,
     nextDayNote: slack === null ? "No deadline set." : slack >= 1 ? `Still within your deadline (${slack} spare day${slack === 1 ? "" : "s"}).` : "This would miss your return deadline.",
     originsForAlternates: destination.airports,
   });

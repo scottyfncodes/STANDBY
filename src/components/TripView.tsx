@@ -11,12 +11,14 @@ import type { TripRequest } from "@/lib/domain/types";
 import { TIER_COPY, type Factor, type TripAssessment } from "@/lib/engine/assess";
 import { DEMAND_LABEL, type DemandLevel } from "@/lib/engine/calendar";
 import { compareDates, defaultRequest, type DateOption } from "@/lib/engine/discover";
-import { ItineraryEngine, type Itinerary, type PathSummary } from "@/lib/engine/itinerary";
+import { ItineraryEngine, resilienceNotes, type Itinerary, type PathSummary } from "@/lib/engine/itinerary";
 import { buildPlan, type FallbackKind, type FallbackOption, type TripPlan } from "@/lib/engine/plan";
 import { formatDate, formatDuration, formatShortDate, formatTime, monthName, monthOf, weekdayName } from "@/lib/engine/time";
 import type { ClimateResult } from "@/lib/providers/types";
+import type { FlightHistory } from "@/lib/providers/history";
+import { LOAD_BAND_LABEL, loadBand, type FlightLoads } from "@/lib/providers/loads";
 import { assessParty } from "@/lib/eligibility/party";
-import { useToday } from "./hooks";
+import { useFlightHistory, useFlightLoads, useToday } from "./hooks";
 import { Icon, type IconName } from "./icons";
 import { useStore } from "./store";
 import { PostcardArt, Prov, RouteDiagram, Segmented, TierBadge } from "./ui";
@@ -45,8 +47,13 @@ export function TripView({ destinationId }: { destinationId: string }) {
   }, [today, ready, params, profile]);
 
   const airline = getAirline(profile.party.airline);
-  const engine = useMemo(() => new ItineraryEngine(airline), [airline]);
-  const comparison = useMemo(() => (request ? compareDates({ airline, engine, request, party: profile.party, destination, maxDates: 62 }) : null), [airline, engine, request, profile.party, destination]);
+  const historyState = useFlightHistory();
+  const loadsState = useFlightLoads();
+  const history = historyState.status === "ready" ? historyState.data : undefined;
+  const loads = loadsState.status === "ready" ? loadsState.data : undefined;
+  const dataLoading = historyState.status === "loading" || loadsState.status === "loading";
+  const engine = useMemo(() => new ItineraryEngine(airline, history, loads), [airline, history, loads]);
+  const comparison = useMemo(() => (request && !dataLoading ? compareDates({ airline, engine, request, party: profile.party, destination, maxDates: 62 }) : null), [airline, engine, request, profile.party, destination, dataLoading]);
 
   const wanted = params.get("d");
   const selected = comparison ? comparison.options.find((o) => o.date === wanted) ?? comparison.options[0] : undefined;
@@ -124,12 +131,12 @@ export function TripView({ destinationId }: { destinationId: string }) {
             </div>
           )}
           <div style={{ marginTop: 12 }} className="narrow">
-            {tab === "plan" && <PlanTab a={selected.assessment} plan={plan} destination={destination} request={request} climate={climate} isBest={best?.date === selected.date} best={best} onPick={pickDate} goTo={setTab} />}
+            {tab === "plan" && <PlanTab a={selected.assessment} plan={plan} destination={destination} request={request} climate={climate} isBest={best?.date === selected.date} best={best} onPick={pickDate} goTo={setTab} history={history} />}
             {tab === "dates" && <DatesTab comparison={comparison} selected={selected.date} onPick={pickDate} destination={destination} request={request} climate={climate} engine={engine} />}
-            {tab === "routes" && <RoutesTab plan={plan} a={selected.assessment} />}
+            {tab === "routes" && <RoutesTab plan={plan} a={selected.assessment} history={history} loads={loads} />}
             {tab === "backups" && <BackupsTab plan={plan} />}
             {tab === "home" && <HomeTab plan={plan} a={selected.assessment} request={request} />}
-            {tab === "evidence" && <EvidenceTab a={selected.assessment} airlineName={airline.name} climate={climate} />}
+            {tab === "evidence" && <EvidenceTab a={selected.assessment} airlineName={airline.name} climate={climate} history={history} loads={loads} />}
           </div>
         </>
       )}
@@ -167,7 +174,7 @@ function climateFor(destination: Destination, climate: ClimateState, month: numb
 
 // ——— Plan
 
-function PlanTab({ a, plan, destination, request, climate, isBest, best, onPick, goTo }: { a: TripAssessment; plan: TripPlan; destination: Destination; request: TripRequest; climate: ClimateState; isBest: boolean; best?: DateOption; onPick: (d: string) => void; goTo: (t: Tab) => void }) {
+function PlanTab({ a, plan, destination, request, climate, isBest, best, onPick, goTo, history }: { a: TripAssessment; plan: TripPlan; destination: Destination; request: TripRequest; climate: ClimateState; isBest: boolean; best?: DateOption; onPick: (d: string) => void; goTo: (t: Tab) => void; history?: FlightHistory }) {
   const { profile } = useStore();
   const party = assessParty(profile.party, request.travelers);
   const first = plan.firstAttempt;
@@ -202,7 +209,7 @@ function PlanTab({ a, plan, destination, request, climate, isBest, best, onPick,
               {first.arrivesLaterDay ? " the next day" : ""} local time · {formatDuration(first.totalMin)}.
             </p>
             <p className="tiny" style={{ margin: "6px 0 0" }}>
-              Times are estimated from typical frequency, not a published schedule. Confirm flights on aa.com.
+              <ScheduleSourceNote date={a.outboundDate} history={history} />
             </p>
           </>
         ) : (
@@ -471,7 +478,7 @@ function SeasonOverview({ destination, request, climate, engine }: { destination
 
 // ——— Routes
 
-function RoutesTab({ plan, a }: { plan: TripPlan; a: TripAssessment }) {
+function RoutesTab({ plan, a, history, loads }: { plan: TripPlan; a: TripAssessment; history?: FlightHistory; loads?: FlightLoads }) {
   const [dir, setDir] = useState<"out" | "back">("out");
   const paths = dir === "out" ? plan.outboundPaths : plan.returnPaths;
   const date = dir === "out" ? a.outboundDate : a.returnDate;
@@ -490,22 +497,40 @@ function RoutesTab({ plan, a }: { plan: TripPlan; a: TripAssessment }) {
         <div className="notice" style={{ marginTop: 12 }}>
           <Icon name="clock" size={18} />
           <span>
-            Departure times below are <strong>estimated</strong> from typical daily frequency and bank patterns — not a live schedule — and public seat maps would not show standby availability anyway. Confirm real flights on aa.com.
+            <ScheduleSourceNote date={date} history={history} /> Public seat maps wouldn’t show standby availability anyway.
           </span>
         </div>
       </div>
       {paths.length === 0 && <div className="panel">No routings found for {formatDate(date)}.</div>}
       {paths.slice(0, 8).map((p, i) => (
-        <PathCard key={p.key} p={p} recommended={i === 0} />
+        <PathCard key={p.key} p={p} recommended={i === 0} history={history} loads={loads} />
       ))}
       {paths.length > 8 && <p className="tiny">{paths.length - 8} more routings with fewer practical options aren’t shown.</p>}
     </div>
   );
 }
 
-function PathCard({ p, recommended }: { p: PathSummary; recommended: boolean }) {
+/** Explains where departure times come from for a date: last year's records, or estimates. */
+function ScheduleSourceNote({ date, history }: { date: string; history?: FlightHistory }) {
+  const observed = history?.observedLabel(monthOf(date));
+  if (!history || !observed)
+    return (
+      <>
+        Departure times are <strong>estimated</strong> from typical daily frequency — not a published schedule. Confirm real flights on aa.com.
+      </>
+    );
+  return (
+    <>
+      Times marked <strong>as flown</strong> are how American operated these routes on {weekdayName(date, true)}s in {observed} (US DOT records). Others (marked ~) are <strong>estimated</strong>. This year’s schedule may differ — confirm on aa.com.
+    </>
+  );
+}
+
+function PathCard({ p, recommended, history, loads }: { p: PathSummary; recommended: boolean; history?: FlightHistory; loads?: FlightLoads }) {
   const sameDay = p.options.filter((o) => !o.overnightConnection);
   const last = sameDay[sameDay.length - 1];
+  const legs = p.via ? [[p.origin, p.via], [p.via, p.destination]] : [[p.origin, p.destination]];
+  const reliability = legs.map(([f, t]) => ({ f: f!, t: t!, r: history?.reliability(f!, t!) })).filter((x) => x.r && x.r.n >= 30);
   return (
     <div className="card" style={{ padding: 16 }}>
       <div className="between">
@@ -522,11 +547,7 @@ function PathCard({ p, recommended }: { p: PathSummary; recommended: boolean }) 
           <Icon name="clock" size={13} /> {formatDuration(p.typicalMin)} best total
         </span>
         <span>{sameDay.length} same-day option{sameDay.length === 1 ? "" : "s"}</span>
-        {p.overnightRisk && (
-          <span style={{ color: "var(--warn)" }}>
-            <Icon name="moon" size={13} /> Late departures may mean a hub overnight
-          </span>
-        )}
+        {p.basis === "historical" ? <Prov kind="historical" label={`As flown · ${history?.observedLabel(monthOf(p.options[0]!.legs[0]!.depLocal.date)) ?? "BTS"}`} /> : <Prov kind="estimate" label="Estimated times" />}
       </div>
       <div className="slots" style={{ marginTop: 10 }}>
         {p.options.map((o, i) => (
@@ -537,8 +558,46 @@ function PathCard({ p, recommended }: { p: PathSummary; recommended: boolean }) 
         <p className="tiny" style={{ margin: "8px 0 0" }}>
           Last realistic same-day attempt around <strong>{formatTime(last.legs[0]!.depLocal.time)}</strong>
           {last.arrivesLaterDay ? " (arrives next day)" : ""}.
+          {p.overnightRisk ? " Later departures may mean a night at the hub." : ""}
         </p>
       )}
+      <ul className="list-plain" style={{ marginTop: 10 }}>
+        {resilienceNotes(p).map((n) => (
+          <li key={n.text} className="row" style={{ alignItems: "flex-start", fontSize: 13.5 }}>
+            <span className={`fallback-icon tone-${n.tone}`} style={{ width: 20, height: 20, borderRadius: 6, flex: "none", marginTop: 1 }}>
+              <Icon name={n.tone === "caution" ? "alert" : "check"} size={12} />
+            </span>
+            {n.text}
+          </li>
+        ))}
+      </ul>
+      <LoadLines p={p} loads={loads} />
+      {reliability.length > 0 && (
+        <div className="tiny" style={{ marginTop: 8 }}>
+          {reliability.map(({ f, t, r }) => (
+            <div key={`${f}${t}`}>
+              {f}→{t}: {r!.late15}% arrived 15+ min late, {r!.cancel}% cancelled ({r!.n.toLocaleString()} flights, BTS)
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Historical load factor per leg — explicitly an average from last year, not open seats. */
+function LoadLines({ p, loads }: { p: PathSummary; loads?: FlightLoads }) {
+  const sample = p.options[0];
+  if (!loads || !sample) return null;
+  const rows = sample.legs.map((l) => ({ l, load: loads.route(l.from, l.to, monthOf(l.depLocal.date)) })).filter((x) => x.load);
+  if (!rows.length) return null;
+  return (
+    <div className="tiny" style={{ marginTop: 8 }}>
+      {rows.map(({ l, load }) => (
+        <div key={`${l.from}${l.to}`}>
+          {l.from}→{l.to}: {LOAD_BAND_LABEL[loadBand(load!.loadFactor)].toLowerCase()} — averaged {Math.round(load!.loadFactor)}% full in {loads.label(load!)} (BTS T-100, historical average, not today’s open seats)
+        </div>
+      ))}
     </div>
   );
 }
@@ -546,8 +605,9 @@ function PathCard({ p, recommended }: { p: PathSummary; recommended: boolean }) 
 function SlotChip({ it, first, last }: { it: Itinerary; first: boolean; last: boolean }) {
   const t = formatTime(it.legs[0]!.depLocal.time);
   return (
-    <span className={`slot ${first ? "first" : ""} ${last ? "last" : ""}`} title={it.overnightConnection ? "Requires an overnight connection" : undefined}>
-      ~{t}
+    <span className={`slot ${first ? "first" : ""} ${last ? "last" : ""}`} title={it.overnightConnection ? "Requires an overnight connection" : it.basis === "historical" ? "As flown in the same month of the BTS data" : "Estimated time"}>
+      {it.basis === "historical" ? "" : "~"}
+      {t}
       {it.overnightConnection ? " ☾" : ""}
     </span>
   );
@@ -638,7 +698,7 @@ function HomeTab({ plan, a, request }: { plan: TripPlan; a: TripAssessment; requ
         </h2>
         <p className="small" style={{ margin: "6px 0 12px" }}>
           Approximate flights you could try for from {a.destAirports.join("/")} to {a.homeAirports.join("/")}
-          {request.homeBy ? " before your deadline" : ""}.
+          {request.homeBy ? " that land by the end of your deadline day" : ""}.
         </p>
         <div className="bars">
           {rp.days.map((d) => (
@@ -700,7 +760,7 @@ function HomeTab({ plan, a, request }: { plan: TripPlan; a: TripAssessment; requ
 const IMPACT_CLASS = { helps: "tone-good", neutral: "tone-ok", hurts: "tone-caution" } as const;
 const IMPACT_LABEL = { helps: "Helps", neutral: "Neutral", hurts: "Hurts" } as const;
 
-function EvidenceTab({ a, airlineName, climate }: { a: TripAssessment; airlineName: string; climate: ClimateState }) {
+function EvidenceTab({ a, airlineName, climate, history, loads }: { a: TripAssessment; airlineName: string; climate: ClimateState; history?: FlightHistory; loads?: FlightLoads }) {
   return (
     <div className="stack-lg">
       <section className="card" style={{ padding: 16 }}>
@@ -732,8 +792,24 @@ function EvidenceTab({ a, airlineName, climate }: { a: TripAssessment; airlineNa
             <Prov kind="reference" label="Reference · Oct 2026" />
           </li>
           <li className="between">
-            <span>Departure times</span>
+            <span>Departure times (US domestic)</span>
+            {history ? <Prov kind="historical" label={`As flown · ${history.provenance.asOf ?? "BTS"}`} /> : <Prov kind="estimate" />}
+          </li>
+          <li className="between">
+            <span>Departure times (international)</span>
             <Prov kind="estimate" />
+          </li>
+          <li className="between">
+            <span>Delays & cancellations by route</span>
+            {history ? <Prov kind="historical" label="BTS on-time records" /> : <Prov kind="unavailable" />}
+          </li>
+          <li className="between">
+            <span>How full flights ran (load factors)</span>
+            {loads && a.factors.some((f) => f.key === "loads") ? (
+              <Prov kind="historical" label={`BTS T-100 · ${loads.provenance.asOf ?? ""}`} />
+            ) : (
+              <Prov kind="unavailable" label={loads ? "No data for these routes" : "Not loaded"} />
+            )}
           </li>
           <li className="between">
             <span>Holidays & school breaks</span>
@@ -761,9 +837,11 @@ function EvidenceTab({ a, airlineName, climate }: { a: TripAssessment; airlineNa
       <section className="panel">
         <h3 className="h3">Assumptions that matter</h3>
         <ul className="list-plain" style={{ marginTop: 6 }}>
-          <li>Connections need at least 60 min domestically, 90 min internationally and 120 min after re-entering the US.</li>
-          <li>Typical service operates every day; real schedules vary by weekday and season.</li>
+          <li>Connections need at least 60 min domestically, 90 min internationally and 120 min after re-entering the US (STANDBY planning buffers, not American’s official minimums). About 30 of those minutes are needed even with no delay.</li>
+          <li>Attempts home only count if they land by the end of your deadline day, in your home airport’s time zone.</li>
+          <li>{history ? "US domestic times repeat the most recent BTS pattern for the same calendar month and weekday, which may be more than a year old for dates far ahead; international times are estimated and assumed daily." : "Typical service operates every day; real schedules vary by weekday and season."}</li>
           <li>Alternate arrival airports count for about a third of a primary-airport flight because of the ground transfer.</li>
+          <li>Load factors are monthly averages from the most recent BTS data for flights operated by American and its wholly owned regionals (Envoy, PSA, Piedmont); SkyWest and Republic flights aren’t included. A busy route can still have open seats on a given flight, and a quiet one can be full.</li>
           <li>Your boarding priority is {a.party.prioritiesKnown ? "as you entered it" : "unknown, and may differ between travelers"}.</li>
         </ul>
       </section>

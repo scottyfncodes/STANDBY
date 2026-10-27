@@ -33,9 +33,9 @@ export function providerStatuses(env: Record<string, string | undefined> = proce
       state: env.AERODATABOX_API_KEY ? "not_available" : "not_configured",
       detail: env.AERODATABOX_API_KEY
         ? "A key is present, but this integration isn't implemented yet. STANDBY won't show live data until it is built and verified."
-        : "Not connected. Candidates (AeroDataBox, FlightAware AeroAPI, Cirium) require API keys and most charge for meaningful volume.",
+        : "Not connected. The provider-independent layer (/api/flights/departures) is ready; the recommended first adapter is AeroDataBox. Without it, STANDBY uses last year's as-flown times (domestic) or estimates (international).",
       requires: "AERODATABOX_API_KEY (future)",
-      costNote: "Freemium to paid.",
+      costNote: "AeroDataBox from about $5/month for personal use; FlightAware AeroAPI pay-per-query.",
     },
     {
       id: "fares",
@@ -46,11 +46,22 @@ export function providerStatuses(env: Record<string, string | undefined> = proce
       requires: "DUFFEL_ACCESS_TOKEN (future)",
     },
     {
-      id: "ontime",
-      label: "Historical on-time & cancellation data",
-      provides: "Route-level delay and cancellation history (US DOT / BTS)",
-      state: "not_configured",
-      detail: "Public and free, but not yet imported. A future build could add route-specific disruption history to the scoring.",
+      id: "bts-history",
+      label: "US DOT on-time records (BTS)",
+      provides: "How each American domestic route actually operated: scheduled departure times by month and weekday, block times, late-arrival and cancellation rates",
+      state: "connected",
+      detail:
+        "Free, public-domain data covering the most recent 12 published months (the exact window is shown on each trip's Evidence tab), refreshed by a reviewed GitHub Action. STANDBY uses it for US domestic schedules and misconnect risk. It shows past operation, not this year's published schedule, and doesn't cover international routes.",
+      costNote: "Free.",
+    },
+    {
+      id: "bts-t100",
+      label: "US DOT T-100 seat & passenger counts (BTS)",
+      provides: "How full each American nonstop route ran, by month: passengers ÷ seats (load factor), domestic and international",
+      state: "connected",
+      detail:
+        "Free, public-domain monthly totals, downloaded by a GitHub Action. Shown as historical context only. A monthly average says nothing certain about open seats on a specific flight. Excludes SkyWest and Republic, whose capacity can't be attributed to American.",
+      costNote: "Free.",
     },
     americanAirlines.standbyLoads.status,
   ];
