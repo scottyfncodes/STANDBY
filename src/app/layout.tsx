@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { StoreProvider } from "@/components/store";
 import { TabBar } from "@/components/TabBar";
+import { THEME_SCRIPT } from "@/components/theme-script";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -15,15 +16,16 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
-  themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#f4f0e8" },
-    { media: "(prefers-color-scheme: dark)", color: "#0d1820" },
-  ],
+  // theme-color is set by THEME_SCRIPT so it follows the Appearance setting.
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    // data-theme and color-scheme are set by THEME_SCRIPT before hydration.
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
+      </head>
       <body>
         <StoreProvider>
           <div className="shell">{children}</div>

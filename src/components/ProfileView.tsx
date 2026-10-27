@@ -8,12 +8,14 @@ import type { Budget, RiskTolerance } from "@/lib/domain/types";
 import { assessParty, RELATIONSHIP_LABELS, type Traveler } from "@/lib/eligibility/party";
 import { Icon } from "./icons";
 import { useStore, type Profile } from "./store";
+import { useThemePref, type ThemePref } from "./theme";
 import { TopBar } from "./TopBar";
 import { AirportPicker, Segmented, Stepper, Switch } from "./ui";
 
 export function ProfileView() {
   const { ready, profile, setProfile } = useStore();
   const [picker, setPicker] = useState(false);
+  const [theme, setTheme] = useThemePref();
   if (!ready)
     return (
       <>
@@ -180,6 +182,25 @@ export function ProfileView() {
                 ]}
               />
             </div>
+          </section>
+
+          <section className="card pad">
+            <h2 className="h3">Appearance</h2>
+            <div style={{ marginTop: 12 }}>
+              <Segmented<ThemePref>
+                label="Appearance"
+                value={theme ?? "system"}
+                onChange={setTheme}
+                options={[
+                  { value: "system", label: "System" },
+                  { value: "light", label: "Light" },
+                  { value: "dark", label: "Dark" },
+                ]}
+              />
+            </div>
+            <p className="tiny" style={{ margin: "8px 0 0" }}>
+              System follows your phone’s light or dark setting.
+            </p>
           </section>
         </div>
 
