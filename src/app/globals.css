@@ -65,10 +65,94 @@
   --shadow-lift: 0 1px 0 rgba(16, 32, 43, 0.04), 0 10px 28px -16px rgba(16, 32, 43, 0.28);
   --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
 
+  /* Surfaces that flip with the theme */
+  --field: #ffffff;
+  --on-ink: #ffffff;
+  --glass: rgba(255, 253, 248, 0.9);
+  --glass-paper: rgba(244, 240, 232, 0.94);
+  --shimmer: #f2ede4;
+
   --gutter: 16px;
   --max: 720px;
   --tabbar: 60px;
-  color-scheme: light;
+  color-scheme: light dark;
+}
+
+/*
+ * Night: the same strip, read in a dark cabin. Paper becomes deep navy, ink becomes warm
+ * off-white, and the amber standby light stays the only accent.
+ */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #ede7db;
+    --ink-2: #c4cacc;
+    --muted: #919ca3;
+    --faint: #5d6a72;
+    --paper: #0d1820;
+    --paper-2: #16242e;
+    --card: #12202a;
+    --line: #22323d;
+    --line-2: #33444f;
+    --night: #0c1a24;
+    --night-2: #1b2f3e;
+
+    --sun: #eeab47;
+    --sun-ink: #f1b65c;
+    --sun-wash: #3a2c14;
+    --sea: #4fb3ad;
+
+    --good: #5cc79c;
+    --good-bg: #133227;
+    --ok: #86aee6;
+    --ok-bg: #18293f;
+    --warn: #e7b25b;
+    --warn-bg: #352812;
+    --bad: #ef8b76;
+    --bad-bg: #3a1c17;
+    --unk: #a3adb2;
+    --unk-bg: #212d35;
+
+    --shadow: 0 1px 0 rgba(0, 0, 0, 0.2);
+    --shadow-lift: 0 12px 30px -16px rgba(0, 0, 0, 0.7);
+
+    --field: #182833;
+    --on-ink: #0d1820;
+    --glass: rgba(18, 32, 42, 0.88);
+    --glass-paper: rgba(13, 24, 32, 0.92);
+    --shimmer: #1f303b;
+  }
+
+  .tab[aria-current="page"] svg {
+    color: var(--sun);
+  }
+
+  .notice.dark {
+    background: #1f3546;
+  }
+
+  .postcard-art {
+    filter: brightness(0.86) saturate(0.95);
+  }
+
+  .select {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23919ca3' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  }
+
+  .input[type="date"]::-webkit-calendar-picker-indicator {
+    filter: invert(0.8);
+  }
+
+  .prov.hist {
+    border-color: rgba(134, 174, 230, 0.4);
+  }
+
+  .prov.live {
+    border-color: rgba(92, 199, 156, 0.4);
+  }
+
+  .sheet-backdrop {
+    background: rgba(0, 0, 0, 0.55);
+  }
 }
 
 * {
@@ -197,7 +281,7 @@ summary {
   right: 0;
   bottom: 0;
   z-index: 40;
-  background: rgba(255, 253, 248, 0.9);
+  background: var(--glass);
   backdrop-filter: saturate(1.4) blur(16px);
   -webkit-backdrop-filter: saturate(1.4) blur(16px);
   border-top: 1px solid var(--line);
@@ -438,7 +522,7 @@ summary {
   min-height: 46px;
   border-radius: var(--r-sm);
   border: 1px solid var(--line-2);
-  background: #fff;
+  background: var(--field);
   padding: 10px 12px;
   font-size: 16px;
   appearance: none;
@@ -482,7 +566,7 @@ summary {
   border-radius: var(--pill);
   border: 1px solid var(--ink);
   background: var(--ink);
-  color: #fff;
+  color: var(--on-ink);
   font-weight: 650;
   font-size: 15px;
   text-decoration: none;
@@ -563,7 +647,7 @@ summary {
 
 /* Over destination artwork. */
 .icon-btn.on-art {
-  background: rgba(255, 253, 248, 0.88);
+  background: var(--glass);
   border-color: transparent;
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
@@ -587,7 +671,7 @@ summary {
   padding: 0 13px;
   border-radius: var(--pill);
   border: 1px solid var(--line-2);
-  background: #fff;
+  background: var(--field);
   font-size: 14px;
   font-weight: 550;
   color: var(--ink-2);
@@ -597,7 +681,7 @@ summary {
 .chip[aria-pressed="true"] {
   background: var(--ink);
   border-color: var(--ink);
-  color: #fff;
+  color: var(--on-ink);
 }
 
 .chip:disabled {
@@ -613,7 +697,7 @@ summary {
 .segmented {
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: 1fr;
+  grid-auto-columns: minmax(max-content, 1fr);
   background: var(--paper-2);
   border-radius: var(--r-sm);
   padding: 3px;
@@ -628,15 +712,16 @@ summary {
   font-size: 14px;
   font-weight: 600;
   color: var(--muted);
-  padding: 0 6px;
+  padding: 0 4px;
   min-width: 0;
+  white-space: nowrap;
   transition: background 0.15s ease, color 0.15s ease;
 }
 
 .segmented button[aria-pressed="true"] {
-  background: #fff;
+  background: var(--field);
   color: var(--ink);
-  box-shadow: 0 1px 2px rgba(16, 32, 43, 0.12);
+  box-shadow: var(--shadow);
 }
 
 .stepper {
@@ -645,7 +730,7 @@ summary {
   justify-content: space-between;
   min-height: 46px;
   border: 1px solid var(--line-2);
-  background: #fff;
+  background: var(--field);
   border-radius: var(--r-sm);
   padding: 0 3px;
 }
@@ -697,7 +782,7 @@ summary {
   width: 24px;
   height: 24px;
   border-radius: 50%;
-  background: #fff;
+  background: #FFFFFF;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
   transition: transform 0.18s var(--ease);
 }
@@ -868,7 +953,7 @@ button.notice {
 }
 
 button.notice:hover {
-  background: #e4ddcf;
+  background: var(--line);
 }
 
 /* ——— Empty / unavailable states */
@@ -1061,7 +1146,7 @@ button.notice:hover {
 }
 
 .fact {
-  background: #fff;
+  background: var(--field);
   padding: 8px 10px;
   min-width: 0;
 }
@@ -1289,7 +1374,7 @@ button.notice:hover {
   padding: 2px 8px;
   border-radius: var(--r-xs);
   background: var(--ink);
-  color: #fff;
+  color: var(--on-ink);
   white-space: nowrap;
 }
 
@@ -1323,7 +1408,7 @@ button.notice:hover {
   font-variant-numeric: tabular-nums slashed-zero;
   padding: 6px 9px;
   border-radius: var(--r-xs);
-  background: #fff;
+  background: var(--field);
   border: 1px solid var(--line);
   color: var(--ink-2);
   scroll-snap-align: start;
@@ -1430,7 +1515,7 @@ button.notice:hover {
   z-index: 20;
   margin: 0 calc(var(--gutter) * -1);
   padding: env(safe-area-inset-top) var(--gutter) 0;
-  background: rgba(244, 240, 232, 0.94);
+  background: var(--glass-paper);
   backdrop-filter: saturate(1.3) blur(14px);
   -webkit-backdrop-filter: saturate(1.3) blur(14px);
   border-bottom: 1px solid var(--line-2);
@@ -1530,7 +1615,7 @@ button.notice:hover {
 
 .plan-step:first-child .plan-num {
   background: var(--ink);
-  color: #fff;
+  color: var(--on-ink);
 }
 
 .plan-label {
@@ -1557,7 +1642,7 @@ button.notice:hover {
 
 .plan-label.ink {
   background: var(--ink);
-  color: #fff;
+  color: var(--on-ink);
 }
 
 .alt {
@@ -1619,7 +1704,7 @@ button.notice:hover {
   gap: 12px;
   padding: 12px 14px;
   border: 1px solid var(--line);
-  background: #fff;
+  background: var(--field);
   border-radius: var(--r);
   text-align: left;
   width: 100%;
@@ -1691,7 +1776,7 @@ button.notice:hover {
   border-radius: var(--r-sm);
   padding: 8px 4px;
   text-align: center;
-  background: #fff;
+  background: var(--field);
   border: 1px solid var(--line);
   min-width: 0;
 }
@@ -1827,7 +1912,7 @@ button.notice:hover {
 .fare {
   margin-top: var(--s4);
   border: 1px solid var(--line);
-  background: #fff;
+  background: var(--field);
   border-radius: var(--r);
   overflow: hidden;
 }
@@ -1916,7 +2001,7 @@ button.notice:hover {
   margin: -6px 0 0 -6px;
   border-radius: 50%;
   background: var(--ink);
-  border: 2px solid #fff;
+  border: 2px solid var(--card);
   box-shadow: 0 0 0 1px var(--ink);
 }
 
@@ -2023,7 +2108,7 @@ button.notice:hover {
 /* ——— Loading */
 
 .skeleton {
-  background: linear-gradient(90deg, var(--paper-2), #f2ede4, var(--paper-2));
+  background: linear-gradient(90deg, var(--paper-2), var(--shimmer), var(--paper-2));
   background-size: 200% 100%;
   animation: shimmer 1.4s linear infinite;
   border-radius: var(--r-lg);
@@ -2076,6 +2161,13 @@ button.notice:hover {
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 12px;
+}
+
+@media (max-width: 359px) {
+  .segmented button {
+    font-size: 13px;
+    padding: 0 3px;
+  }
 }
 
 @media (min-width: 760px) {
