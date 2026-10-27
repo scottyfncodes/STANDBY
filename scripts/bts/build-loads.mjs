@@ -129,9 +129,13 @@ async function downloadMonth(ym, dir) {
       writeFileSync(zip, buf);
       // The zip may include a readme next to the data; read only the CSV member.
       const members = execFileSync("unzip", ["-Z1", zip]).toString().split("\n").filter(Boolean);
-      const csvName = members.find((n) => n.toLowerCase().endsWith(".csv"));
-      if (!csvName) throw new Error(`T-100 zip for ${ym} has no CSV (members: ${members.join(", ")})`);
-      return execFileSync("unzip", ["-p", zip, csvName], { maxBuffer: 1024 * 1024 * 512 }).toString("utf8").replace(/^\uFEFF/, "");
+      // The zip also carries a field-definitions CSV; pick the member whose header has the data columns.
+      for (const name of members.filter((n) => n.toLowerCase().endsWith(".csv"))) {
+        const text = execFileSync("unzip", ["-p", zip, name], { maxBuffer: 1024 * 1024 * 512 }).toString("utf8").replace(/^\uFEFF/, "");
+        const head = text.slice(0, text.indexOf("\n")).toUpperCase();
+        if (head.includes("SEATS") && head.includes("PASSENGERS")) return text;
+      }
+      throw new Error(`T-100 zip for ${ym} has no data CSV (members: ${members.join(", ")})`);
     }
     console.log(`  ${ym}: attempt ${attempt} returned ${res.status} ${res.headers.get("content-type")}`);
     await new Promise((r) => setTimeout(r, 5000 * attempt));
