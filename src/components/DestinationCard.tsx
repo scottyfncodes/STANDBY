@@ -16,7 +16,7 @@ export function DestinationCard({ result, rank, href }: { result: DiscoveryResul
     <Link href={href} className="card dest-card">
       <div className="postcard">
         <PostcardArt destination={d} />
-        <span className="postcard-rank">{String(rank).padStart(2, "0")}</span>
+        <span className="postcard-rank">No. {String(rank).padStart(2, "0")}</span>
         <span className="postcard-codes">{a.destAirports.join(" · ")}</span>
         <h3 className="postcard-name">{d.name}</h3>
         <div className="postcard-region">{d.region}</div>
@@ -24,7 +24,7 @@ export function DestinationCard({ result, rank, href }: { result: DiscoveryResul
       <div className="dest-body">
         <div className="between" style={{ flexWrap: "wrap", rowGap: 6 }}>
           <TierBadge tier={a.tier} />
-          <span className="small mono">
+          <span className="small num strong">
             {formatDate(best.date)} → {formatDate(best.returnDate)}
           </span>
         </div>
@@ -36,11 +36,11 @@ export function DestinationCard({ result, rank, href }: { result: DiscoveryResul
         <div className="facts">
           <div className="fact">
             <div className="fact-k">Flights in</div>
-            <div className="fact-v mono">~{a.outbound.depth}</div>
+            <div className="fact-v">~{a.outbound.depth}</div>
           </div>
           <div className="fact">
             <div className="fact-k">Flights home</div>
-            <div className="fact-v mono">~{a.inbound.depth}</div>
+            <div className="fact-v">~{a.inbound.depth}</div>
           </div>
           <div className="fact">
             <div className="fact-k">Best route</div>
@@ -53,7 +53,7 @@ export function DestinationCard({ result, rank, href }: { result: DiscoveryResul
             <span>{risk}</span>
           </div>
         )}
-        <div className="between" style={{ marginTop: 12 }}>
+        <div className="between dest-foot">
           <span className="tiny">
             {costLabel(d.cost)} on the ground (est.) · ~{high}°F highs
           </span>

@@ -41,7 +41,7 @@ export function TripSetup({ request, onChange, today }: { request: TripRequest; 
   const nearby = [...new Set(request.origins.flatMap((o) => NEARBY_AIRPORTS[o] ?? []))].filter((x) => !request.origins.includes(x));
 
   return (
-    <div className="card" style={{ padding: 16 }}>
+    <div className="card pad">
       <span className="field-label">Leaving from</span>
       <div className="chips">
         {request.origins.map((o) => (

@@ -5,7 +5,9 @@ import { getAirport } from "@/lib/data/airports";
 import type { Destination } from "@/lib/data/destinations";
 import type { AirportCode, ProvenanceKind } from "@/lib/domain/types";
 import { TIER_COPY, type Tier } from "@/lib/engine/assess";
-import { Icon } from "./icons";
+import type { Itinerary } from "@/lib/engine/itinerary";
+import { formatDuration, formatTime } from "@/lib/engine/time";
+import { Icon, type IconName } from "./icons";
 
 export function TierBadge({ tier, short = false }: { tier: Tier; short?: boolean }) {
   return <span className={`badge t-${tier}`}>{short ? TIER_COPY[tier].short : TIER_COPY[tier].label}</span>;
@@ -187,13 +189,19 @@ export function AirportPicker({ open, onClose, choices, selected, onPick, title 
               </span>
               <span>
                 <span style={{ display: "block", fontWeight: 600 }}>{a.city}</span>
-                <span className="tiny">{a.name}</span>
+                <span className="tiny" style={{ display: "block" }}>{a.name}</span>
               </span>
               {on ? <Icon name="check" style={{ color: "var(--good)" }} /> : <span />}
             </button>
           );
         })}
-        {!filtered.length && <p className="small" style={{ padding: "16px var(--gutter)" }}>No airports match “{q}”. STANDBY currently covers airports in its American Airlines reference network.</p>}
+        {!filtered.length && (
+          <div style={{ padding: "16px var(--gutter)" }}>
+            <EmptyState icon="pin" title="No matching airports">
+              Nothing matches “{q}”. STANDBY covers airports in its American Airlines reference network.
+            </EmptyState>
+          </div>
+        )}
       </div>
     </Sheet>
   );
@@ -222,6 +230,94 @@ export function RouteDiagram({ origin, via, destination, legDaily }: { origin: A
         <span>{f(legDaily[1])}</span>
       </span>
       <span className="route-code">{destination}</span>
+    </div>
+  );
+}
+
+/** "5:00a" → 5:00 + small "a", so the digits carry the weight. */
+export function Time({ t }: { t: string }) {
+  const s = formatTime(t);
+  return (
+    <>
+      {s.slice(0, -1)}
+      <small>{s.slice(-1)}</small>
+    </>
+  );
+}
+
+/**
+ * One itinerary as a flight strip: departure and arrival times large, airports beneath,
+ * duration and connection between. Estimated times carry a "~" so they never read as published.
+ */
+export function FlightStrip({ it, children }: { it: Itinerary; children?: ReactNode }) {
+  const first = it.legs[0]!;
+  const last = it.legs[it.legs.length - 1]!;
+  const approx = it.legs.some((l) => l.basis === "estimate");
+  const from = getAirport(it.origin);
+  const to = getAirport(it.destination);
+  const flights = it.legs.map((l) => l.flight).filter(Boolean) as string[];
+  return (
+    <div>
+      <div className="strip">
+        <div className="strip-end">
+          <div className="strip-time">
+            {approx ? "~" : ""}
+            <Time t={first.depLocal.time} />
+          </div>
+          <div className="strip-code">{it.origin}</div>
+          <div className="strip-city">{from?.city}</div>
+        </div>
+        <div className="strip-mid" aria-hidden="true">
+          <span className="strip-dur">{formatDuration(it.totalMin)}</span>
+          <span className="strip-path">{it.via && <span className="strip-via">{it.via}</span>}</span>
+          <span className="strip-stops">{it.via ? "1 stop" : "Nonstop"}</span>
+        </div>
+        <div className="strip-end arr">
+          <div className="strip-time">
+            {approx ? "~" : ""}
+            <Time t={last.arrLocal.time} />
+            {it.arrivesLaterDay && <sup>+1</sup>}
+          </div>
+          <div className="strip-code">{it.destination}</div>
+          <div className="strip-city">{to?.city}</div>
+        </div>
+      </div>
+      <p className="sr-only">
+        {it.origin} {formatTime(first.depLocal.time)} to {it.destination} {formatTime(last.arrLocal.time)}
+        {it.arrivesLaterDay ? " next day" : ""}, {formatDuration(it.totalMin)}, {it.via ? `connecting in ${it.via}` : "nonstop"}.
+      </p>
+      {(flights.length > 0 || children) && (
+        <div className="strip-meta">
+          {flights.map((f) => (
+            <span key={f} className="flightno">
+              {f}
+            </span>
+          ))}
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function SectionHead({ title, aside }: { title: ReactNode; aside?: ReactNode }) {
+  return (
+    <div className="section-head">
+      <h2 className="h2">{title}</h2>
+      {aside}
+    </div>
+  );
+}
+
+export function EmptyState({ icon = "compass", title, children, action }: { icon?: IconName; title: string; children?: ReactNode; action?: ReactNode }) {
+  return (
+    <div className="empty">
+      <div className="empty-mark">
+        <Icon name={icon} size={20} />
+      </div>
+      <h2 className="h2">{title}</h2>
+      {children && <p>{children}</p>}
+      {action}
     </div>
   );
 }

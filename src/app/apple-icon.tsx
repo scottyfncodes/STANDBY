@@ -3,17 +3,14 @@ import { ImageResponse } from "next/og";
 export const size = { width: 180, height: 180 };
 export const contentType = "image/png";
 
+// Same mark as icon.svg, full-bleed: iOS applies its own corner mask.
+const MARK = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" fill="#10202b"/><circle cx="46" cy="22" r="11" fill="#e9a23b" fill-opacity=".18"/><circle cx="46" cy="22" r="6" fill="#e9a23b"/><path d="M12 46C20 34 28 27 37 24" stroke="#f4f0e8" stroke-width="3.2" stroke-linecap="round" stroke-dasharray=".1 6.2" fill="none"/><path d="M12 51h40" stroke="#f4f0e8" stroke-opacity=".28" stroke-width="2" stroke-linecap="round"/></svg>`;
+
 export default function AppleIcon() {
   return new ImageResponse(
     (
-      <div style={{ width: "100%", height: "100%", display: "flex", background: "#0c1a24", position: "relative" }}>
-        <div style={{ position: "absolute", left: 104, top: 44, width: 46, height: 46, borderRadius: 46, background: "#e9a23b" }} />
-        <div style={{ position: "absolute", left: 22, top: 132, width: 136, height: 5, borderRadius: 3, background: "#f5f0e6", opacity: 0.4 }} />
-        <div style={{ position: "absolute", left: 22, top: 110, display: "flex", gap: 12 }}>
-          {Array.from({ length: 8 }).map((_, i) => (
-            <div key={i} style={{ width: 8, height: 8, borderRadius: 8, background: "#f5f0e6", marginTop: -i * 6 + (i > 4 ? (i - 4) * 10 : 0) }} />
-          ))}
-        </div>
+      <div style={{ width: "100%", height: "100%", display: "flex" }}>
+        <img src={`data:image/svg+xml;base64,${Buffer.from(MARK).toString("base64")}`} width={180} height={180} alt="" />
       </div>
     ),
     size,

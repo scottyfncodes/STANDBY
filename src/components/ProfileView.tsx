@@ -35,14 +35,14 @@ export function ProfileView() {
       <TopBar />
       <main className="page narrow">
         <section className="hero">
-          <h1 className="display" style={{ fontSize: 40 }}>
+          <h1 className="display sm">
             Travelers
           </h1>
           <p className="lede">Who’s flying, from where, and how you like to travel. Saved only on this device.</p>
         </section>
 
         <div className="stack-lg">
-          <section className="card" style={{ padding: 16 }}>
+          <section className="card pad">
             <h2 className="h3">Airline privileges</h2>
             <label style={{ display: "block", marginTop: 10 }}>
               <span className="field-label">Airline</span>
@@ -59,7 +59,7 @@ export function ProfileView() {
             </p>
           </section>
 
-          <section className="card" style={{ padding: 16 }}>
+          <section className="card pad">
             <div className="between">
               <h2 className="h3">Who’s traveling</h2>
               <button
@@ -73,7 +73,7 @@ export function ProfileView() {
             </div>
             <div className="stack" style={{ marginTop: 12 }}>
               {party.travelers.map((t) => (
-                <div key={t.id} className="panel" style={{ background: "#fff" }}>
+                <div key={t.id} className="panel" style={{ background: "var(--paper)" }}>
                   <div className="grid-2">
                     <label>
                       <span className="field-label">Name</span>
@@ -102,7 +102,7 @@ export function ProfileView() {
                     />
                   </label>
                   {party.travelers.length > 1 && (
-                    <button type="button" className="tiny" style={{ border: 0, background: "none", padding: "8px 0 0", color: "var(--bad)" }} onClick={() => set({ party: { ...party, travelers: party.travelers.filter((x) => x.id !== t.id) } })}>
+                    <button type="button" className="link-btn" style={{ color: "var(--bad)", fontSize: 13, minHeight: 36, marginTop: 4 }} onClick={() => set({ party: { ...party, travelers: party.travelers.filter((x) => x.id !== t.id) } })}>
                       Remove {t.name || "traveler"}
                     </button>
                   )}
@@ -126,7 +126,7 @@ export function ProfileView() {
             </div>
           </section>
 
-          <section className="card" style={{ padding: 16 }}>
+          <section className="card pad">
             <h2 className="h3">Home airports</h2>
             <div className="chips" style={{ marginTop: 10 }}>
               {profile.homeAirports.map((c) => (
@@ -145,7 +145,7 @@ export function ProfileView() {
             <Switch label="Consider nearby airports" hint="e.g. Austin for DFW, Fort Lauderdale for Miami" checked={profile.useNearbyAirports} onChange={(v) => set({ useNearbyAirports: v })} />
           </section>
 
-          <section className="card" style={{ padding: 16 }}>
+          <section className="card pad">
             <h2 className="h3">Defaults for new searches</h2>
             <div className="grid-2" style={{ marginTop: 12 }}>
               <div>
