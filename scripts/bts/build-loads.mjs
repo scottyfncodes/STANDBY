@@ -11,8 +11,9 @@
  * GET the form (ASP.NET view state), then POST the selected fields for one month. The
  * response is a zip containing a CSV.
  *
- * Usage: node scripts/bts/build-loads.mjs [--to YYYY-MM] [--out file] [--strict]
- *   --to defaults to the latest month TranStats reports for the table.
+ * Usage: node scripts/bts/build-loads.mjs [--out file] [--strict] [--allow-shrink] [--to YYYY-MM]
+ *   The window ends at the latest month TranStats reports for the table; --to is only a
+ *   fallback if that can't be read.
  */
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
@@ -184,15 +185,17 @@ async function main() {
   }
   const routes = toRoutes(totals);
   const count = Object.keys(routes).length;
-  if (count < MIN_ROUTES) {
-    console.error(`Validation failed: only ${count} routes (minimum ${MIN_ROUTES}). Not publishing.`);
-    process.exit(1);
-  }
   let previous;
   try {
     previous = JSON.parse(readFileSync(out, "utf8"));
   } catch {
     previous = undefined;
+  }
+  const prevCount = previous ? Object.keys(previous.routes ?? {}).length : 0;
+  // A big drop usually means BTS changed codes or the download was truncated; don't publish it.
+  if (count < MIN_ROUTES || (prevCount && count < prevCount * 0.8 && !argv.includes("--allow-shrink"))) {
+    console.error(`Validation failed: ${count} routes (previous ${prevCount}, minimum ${MIN_ROUTES}). Not publishing.`);
+    process.exit(1);
   }
   const result = {
     meta: {

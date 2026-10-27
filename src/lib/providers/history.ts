@@ -78,7 +78,7 @@ export function createHistory(file: HistoryFile): FlightHistory {
     kind: "historical",
     source: "US DOT BTS on-time performance (as flown)",
     asOf: months.length ? `${months[0]} – ${months[months.length - 1]}` : undefined,
-    note: "Scheduled times and reliability observed in the same month last year. Not this year's published schedule.",
+    note: "Scheduled times and reliability observed in the most recent same calendar month in the BTS data. Not this year's published schedule.",
   };
   const observedYear = new Map<number, number>();
   for (const m of months) observedYear.set(Number(m.slice(5, 7)), Number(m.slice(0, 4)));

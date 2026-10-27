@@ -53,7 +53,7 @@ export function createLoads(file: LoadsFile): FlightLoads {
       kind: "historical",
       source: "US DOT BTS T-100 segment data",
       asOf: months.length ? `${months[0]} – ${months[months.length - 1]}` : undefined,
-      note: "Monthly average passengers ÷ seats last year. Not current seat availability.",
+      note: "Monthly average passengers ÷ seats from the most recent BTS data. Not current seat availability.",
     },
     route(from, to, month) {
       const v = file.routes[`${from}-${to}`]?.[String(month)];

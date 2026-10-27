@@ -146,3 +146,25 @@ describe("real BTS data: seasonal start", () => {
     expect(after.outbound.itineraries.some((i) => i.legs.length === 1 && i.basis === "historical")).toBe(true);
   });
 });
+
+describe("data-refresh workflow safety", () => {
+  it("never pushes to main and keeps expressions out of shell scripts", async () => {
+    const { readFileSync } = await import("node:fs");
+    const wf = readFileSync(".github/workflows/bts-history.yml", "utf8");
+    // Every `git push` targets a feature/data branch via env vars; none can name main.
+    const pushes = wf.split("\n").filter((l) => /git push/.test(l));
+    expect(pushes.length).toBeGreaterThan(0);
+    for (const l of pushes) {
+      expect(l).not.toMatch(/\$\{\{/);
+      expect(l).not.toMatch(/refs\/heads\/main|HEAD:main\b/);
+    }
+    expect(wf).toMatch(/Refusing to push to main/);
+    expect(wf).toMatch(/branches-ignore: \[main/);
+    // Inside `run:` blocks, GitHub expressions must not be spliced into shell.
+    const runBlocks = [...wf.matchAll(/run: \|\n((?:\s{10}.*\n?)+)/g)].map((m) => m[1]);
+    for (const block of runBlocks) expect(block).not.toMatch(/\$\{\{/);
+    // Both builds run strict, so a partial dataset fails the job before anything is committed.
+    expect(wf).toMatch(/build-history\.mjs[^\n]*--strict/);
+    expect(wf).toMatch(/build-loads\.mjs[^\n]*--strict/);
+  });
+});

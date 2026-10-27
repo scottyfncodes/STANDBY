@@ -547,7 +547,7 @@ function PathCard({ p, recommended, history, loads }: { p: PathSummary; recommen
           <Icon name="clock" size={13} /> {formatDuration(p.typicalMin)} best total
         </span>
         <span>{sameDay.length} same-day option{sameDay.length === 1 ? "" : "s"}</span>
-        {p.basis === "historical" ? <Prov kind="historical" label="As flown last year" /> : <Prov kind="estimate" label="Estimated times" />}
+        {p.basis === "historical" ? <Prov kind="historical" label={`As flown · ${history?.observedLabel(monthOf(p.options[0]!.legs[0]!.depLocal.date)) ?? "BTS"}`} /> : <Prov kind="estimate" label="Estimated times" />}
       </div>
       <div className="slots" style={{ marginTop: 10 }}>
         {p.options.map((o, i) => (
@@ -605,7 +605,7 @@ function LoadLines({ p, loads }: { p: PathSummary; loads?: FlightLoads }) {
 function SlotChip({ it, first, last }: { it: Itinerary; first: boolean; last: boolean }) {
   const t = formatTime(it.legs[0]!.depLocal.time);
   return (
-    <span className={`slot ${first ? "first" : ""} ${last ? "last" : ""}`} title={it.overnightConnection ? "Requires an overnight connection" : it.basis === "historical" ? "As flown last year" : "Estimated time"}>
+    <span className={`slot ${first ? "first" : ""} ${last ? "last" : ""}`} title={it.overnightConnection ? "Requires an overnight connection" : it.basis === "historical" ? "As flown in the same month of the BTS data" : "Estimated time"}>
       {it.basis === "historical" ? "" : "~"}
       {t}
       {it.overnightConnection ? " ☾" : ""}
@@ -839,9 +839,9 @@ function EvidenceTab({ a, airlineName, climate, history, loads }: { a: TripAsses
         <ul className="list-plain" style={{ marginTop: 6 }}>
           <li>Connections need at least 60 min domestically, 90 min internationally and 120 min after re-entering the US (STANDBY planning buffers, not American’s official minimums). About 30 of those minutes are needed even with no delay.</li>
           <li>Attempts home only count if they land by the end of your deadline day, in your home airport’s time zone.</li>
-          <li>{history ? "US domestic times repeat last year’s pattern for the same month and weekday; international times are estimated and assumed daily." : "Typical service operates every day; real schedules vary by weekday and season."}</li>
+          <li>{history ? "US domestic times repeat the most recent BTS pattern for the same calendar month and weekday, which may be more than a year old for dates far ahead; international times are estimated and assumed daily." : "Typical service operates every day; real schedules vary by weekday and season."}</li>
           <li>Alternate arrival airports count for about a third of a primary-airport flight because of the ground transfer.</li>
-          <li>Load factors are last year’s monthly averages across all flights on a route. A busy route can still have open seats on a given flight, and a quiet one can be full.</li>
+          <li>Load factors are monthly averages from the most recent BTS data for flights operated by American and its wholly owned regionals (Envoy, PSA, Piedmont); SkyWest and Republic flights aren’t included. A busy route can still have open seats on a given flight, and a quiet one can be full.</li>
           <li>Your boarding priority is {a.party.prioritiesKnown ? "as you entered it" : "unknown, and may differ between travelers"}.</li>
         </ul>
       </section>

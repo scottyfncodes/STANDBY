@@ -9,7 +9,7 @@ name: Refresh BTS flight history
 # - Every run writes a job summary saying what happened, including "no new data".
 on:
   schedule:
-    - cron: "17 9 12 * *" # monthly; BTS publishes on-time data roughly two months after month end
+    - cron: "17 9 12 * *" # monthly; BTS on-time data trails by ~3–5 months, T-100 by ~3
   workflow_dispatch:
     inputs:
       mode:
@@ -45,62 +45,81 @@ jobs:
 
       - name: Decide what to build
         id: plan
-        run: |
-          MODE="${{ github.event_name == 'push' && 'rebuild' || inputs.mode || 'latest' }}"
-          node scripts/bts/plan-refresh.mjs --mode "$MODE" | tee -a "$GITHUB_OUTPUT"
+        env:
+          MODE: ${{ github.event_name == 'push' && 'rebuild' || inputs.mode || 'latest' }}
+        run: node scripts/bts/plan-refresh.mjs --mode "$MODE" | tee -a "$GITHUB_OUTPUT"
 
       - name: Report when there is nothing new
         if: steps.plan.outputs.changed != 'true'
+        env:
+          REASON: ${{ steps.plan.outputs.reason }}
+          LATEST: ${{ steps.plan.outputs.latest }}
+          IS_ERROR: ${{ steps.plan.outputs.error }}
         run: |
           {
             echo "## BTS refresh: no change"
             echo ""
-            echo "- ${{ steps.plan.outputs.reason }}"
-            echo "- Dataset currently ends: ${{ steps.plan.outputs.latest }}"
+            echo "- $REASON"
+            echo "- Dataset currently ends: $LATEST"
           } >> "$GITHUB_STEP_SUMMARY"
-          if [ "${{ steps.plan.outputs.error }}" = "true" ]; then
-            echo "::error::${{ steps.plan.outputs.reason }}"
+          if [ "$IS_ERROR" = "true" ]; then
+            echo "::error::$REASON"
             exit 1
           fi
 
       - name: Build on-time history (strict)
         if: steps.plan.outputs.changed == 'true'
-        run: node scripts/bts/build-history.mjs "${{ steps.plan.outputs.from }}" "${{ steps.plan.outputs.to }}" public/data/aa-history.json --strict
+        env:
+          FROM: ${{ steps.plan.outputs.from }}
+          TO: ${{ steps.plan.outputs.to }}
+        run: node scripts/bts/build-history.mjs "$FROM" "$TO" public/data/aa-history.json --strict
 
       - name: Build T-100 load factors (strict)
         if: steps.plan.outputs.changed == 'true'
-        run: node scripts/bts/build-loads.mjs --to "${{ steps.plan.outputs.to }}" --out public/data/aa-loads.json --strict
+        run: node scripts/bts/build-loads.mjs --out public/data/aa-loads.json --strict
 
       - name: Commit and publish for review
         if: steps.plan.outputs.changed == 'true'
+        # Values go through env, never spliced into the script, so branch names can't inject shell.
         env:
           GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          FROM: ${{ steps.plan.outputs.from }}
+          TO: ${{ steps.plan.outputs.to }}
+          REASON: ${{ steps.plan.outputs.reason }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add public/data/aa-history.json public/data/aa-loads.json
-          SUMMARY="## BTS refresh: ${{ steps.plan.outputs.reason }}"
+          SUMMARY="## BTS refresh: $REASON"
           if git diff --cached --quiet; then
-            printf '%s\n\nRebuilt %s..%s; output identical to the committed data.\n' "$SUMMARY" "${{ steps.plan.outputs.from }}" "${{ steps.plan.outputs.to }}" >> "$GITHUB_STEP_SUMMARY"
+            printf '%s\n\nRebuilt %s..%s; output identical to the committed data.\n' "$SUMMARY" "$FROM" "$TO" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          git commit -m "Refresh BTS data (${{ steps.plan.outputs.from }}..${{ steps.plan.outputs.to }})"
-          if [ "${{ github.event_name }}" = "push" ]; then
+          git commit -m "Refresh BTS data ($FROM..$TO)"
+          if [ "$EVENT" = "push" ]; then
             # Feature branch: commit back to the same branch, replaying on top of any newer push.
-            git pull --rebase origin "${{ github.ref_name }}"
-            git push origin "HEAD:${{ github.ref_name }}"
-            printf '%s\n\nCommitted to `%s`.\n' "$SUMMARY" "${{ github.ref_name }}" >> "$GITHUB_STEP_SUMMARY"
+            if [ "$REF_NAME" = "main" ]; then echo "::error::Refusing to push to main"; exit 1; fi
+            git pull --rebase origin "$REF_NAME"
+            git push origin "HEAD:refs/heads/$REF_NAME"
+            printf '%s\n\nCommitted to `%s`.\n' "$SUMMARY" "$REF_NAME" >> "$GITHUB_STEP_SUMMARY"
           else
-            # Scheduled/manual: never touch main directly. Publish a branch and open a PR.
-            BRANCH="data/bts-refresh-${{ steps.plan.outputs.to }}"
+            # Scheduled/manual: never touch main directly. Publish a review branch and open a PR.
+            BRANCH="data/bts-refresh-$TO"
+            # Fetch any earlier run's branch so --force-with-lease has something to compare against.
+            git fetch origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" 2>/dev/null || true
             git push --force-with-lease origin "HEAD:refs/heads/$BRANCH"
-            if gh pr create --base main --head "$BRANCH" --title "Refresh BTS data through ${{ steps.plan.outputs.to }}" \
-                 --body "Automated refresh (${{ steps.plan.outputs.from }}..${{ steps.plan.outputs.to }}). Review the preview before merging." 2>pr.err; then
+            if gh pr view "$BRANCH" --json state -q .state 2>/dev/null | grep -q OPEN; then
+              printf '%s\n\nUpdated the open PR from `%s`.\n' "$SUMMARY" "$BRANCH" >> "$GITHUB_STEP_SUMMARY"
+            elif gh pr create --base main --head "$BRANCH" --title "Refresh BTS data through $TO" \
+                 --body "Automated refresh ($FROM..$TO). Review the preview before merging." 2>pr.err; then
               printf '%s\n\nOpened a PR from `%s`.\n' "$SUMMARY" "$BRANCH" >> "$GITHUB_STEP_SUMMARY"
             else
               # Repos that disallow Actions-created PRs still get the branch; say so plainly.
               printf '%s\n\nPushed `%s` but could not open a PR (%s). Open one from: %s/compare/main...%s\n' \
-                "$SUMMARY" "$BRANCH" "$(head -c 200 pr.err)" "${{ github.server_url }}/${{ github.repository }}" "$BRANCH" >> "$GITHUB_STEP_SUMMARY"
+                "$SUMMARY" "$BRANCH" "$(head -c 200 pr.err)" "$REPO_URL" "$BRANCH" >> "$GITHUB_STEP_SUMMARY"
               echo "::warning::Branch $BRANCH pushed; PR must be opened manually."
             fi
           fi
