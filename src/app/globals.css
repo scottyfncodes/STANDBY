@@ -75,84 +75,88 @@
   --gutter: 16px;
   --max: 720px;
   --tabbar: 60px;
-  color-scheme: light dark;
+  color-scheme: light;
 }
 
 /*
  * Night: the same strip, read in a dark cabin. Paper becomes deep navy, ink becomes warm
- * off-white, and the amber standby light stays the only accent.
+ * off-white, and the amber standby light stays the only accent. data-theme is set before
+ * first paint from the Appearance setting (System follows prefers-color-scheme).
  */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --ink: #ede7db;
-    --ink-2: #c4cacc;
-    --muted: #919ca3;
-    --faint: #5d6a72;
-    --paper: #0d1820;
-    --paper-2: #16242e;
-    --card: #12202a;
-    --line: #22323d;
-    --line-2: #33444f;
-    --night: #0c1a24;
-    --night-2: #1b2f3e;
+[data-theme="dark"] {
+  color-scheme: dark;
+  --ink: #ede7db;
+  --ink-2: #c4cacc;
+  --muted: #919ca3;
+  --faint: #5d6a72;
+  --paper: #0d1820;
+  --paper-2: #16242e;
+  --card: #12202a;
+  --line: #22323d;
+  --line-2: #33444f;
+  --night: #0c1a24;
+  --night-2: #1b2f3e;
 
-    --sun: #eeab47;
-    --sun-ink: #f1b65c;
-    --sun-wash: #3a2c14;
-    --sea: #4fb3ad;
+  --sun: #eeab47;
+  --sun-ink: #f1b65c;
+  --sun-wash: #3a2c14;
+  --sea: #4fb3ad;
 
-    --good: #5cc79c;
-    --good-bg: #133227;
-    --ok: #86aee6;
-    --ok-bg: #18293f;
-    --warn: #e7b25b;
-    --warn-bg: #352812;
-    --bad: #ef8b76;
-    --bad-bg: #3a1c17;
-    --unk: #a3adb2;
-    --unk-bg: #212d35;
+  --good: #5cc79c;
+  --good-bg: #133227;
+  --ok: #86aee6;
+  --ok-bg: #18293f;
+  --warn: #e7b25b;
+  --warn-bg: #352812;
+  --bad: #ef8b76;
+  --bad-bg: #3a1c17;
+  --unk: #a3adb2;
+  --unk-bg: #212d35;
 
-    --shadow: 0 1px 0 rgba(0, 0, 0, 0.2);
-    --shadow-lift: 0 12px 30px -16px rgba(0, 0, 0, 0.7);
+  --shadow: 0 1px 0 rgba(0, 0, 0, 0.2);
+  --shadow-lift: 0 12px 30px -16px rgba(0, 0, 0, 0.7);
 
-    --field: #182833;
-    --on-ink: #0d1820;
-    --glass: rgba(18, 32, 42, 0.88);
-    --glass-paper: rgba(13, 24, 32, 0.92);
-    --shimmer: #1f303b;
-  }
+  --field: #182833;
+  --on-ink: #0d1820;
+  --glass: rgba(18, 32, 42, 0.88);
+  --glass-paper: rgba(13, 24, 32, 0.92);
+  --shimmer: #1f303b;
+}
 
-  .tab[aria-current="page"] svg {
-    color: var(--sun);
-  }
+[data-theme="dark"] .tab[aria-current="page"] svg {
+  color: var(--sun);
+}
 
-  .notice.dark {
-    background: #1f3546;
-  }
+[data-theme="dark"] .notice.dark {
+  background: #1f3546;
+}
 
-  .postcard-art {
-    filter: brightness(0.86) saturate(0.95);
-  }
+[data-theme="dark"] .postcard-art {
+  filter: brightness(0.86) saturate(0.95);
+}
 
-  .select {
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23919ca3' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
-  }
+[data-theme="dark"] .select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23919ca3' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+}
 
-  .input[type="date"]::-webkit-calendar-picker-indicator {
-    filter: invert(0.8);
-  }
+[data-theme="dark"] .input[type="date"]::-webkit-calendar-picker-indicator {
+  filter: invert(0.8);
+}
 
-  .prov.hist {
-    border-color: rgba(134, 174, 230, 0.4);
-  }
+[data-theme="dark"] .prov.hist {
+  border-color: rgba(134, 174, 230, 0.4);
+}
 
-  .prov.live {
-    border-color: rgba(92, 199, 156, 0.4);
-  }
+[data-theme="dark"] .prov.live {
+  border-color: rgba(92, 199, 156, 0.4);
+}
 
-  .sheet-backdrop {
-    background: rgba(0, 0, 0, 0.55);
-  }
+[data-theme="dark"] .segmented button[aria-pressed="true"] {
+  background: var(--line-2);
+}
+
+[data-theme="dark"] .sheet-backdrop {
+  background: rgba(0, 0, 0, 0.55);
 }
 
 * {
