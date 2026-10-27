@@ -16,7 +16,7 @@ import { buildPlan, type FallbackKind, type FallbackOption, type TripPlan } from
 import { formatDate, formatDuration, formatShortDate, formatTime, monthName, monthOf, weekdayName } from "@/lib/engine/time";
 import type { ClimateResult } from "@/lib/providers/types";
 import type { FlightHistory } from "@/lib/providers/history";
-import { LiveSchedule } from "@/lib/providers/live";
+import { LiveSchedule, liveFallbackLabel } from "@/lib/providers/live";
 import { LOAD_BAND_LABEL, loadBand, type FlightLoads } from "@/lib/providers/loads";
 import { assessParty } from "@/lib/eligibility/party";
 import { useFlightHistory, useFlightLoads, useLiveDay, useToday, type LiveState } from "./hooks";
@@ -545,7 +545,7 @@ function LiveNote({ state }: { state: LiveState }) {
       </>
     );
   if (state.status === "unavailable" && state.reason === "unsupported") return <>{state.detail}</>;
-  if (state.status === "unavailable" && state.reason !== "not_configured") return <>Live schedule unavailable right now ({state.detail || state.reason}).</>;
+  if (state.status === "unavailable" && state.reason !== "not_configured") return <>Live schedule unavailable right now ({(state.detail || state.reason).replace(/\.$/, "")}).</>;
   return null;
 }
 
@@ -853,7 +853,7 @@ function EvidenceTab({ a, airlineName, climate, history, loads, live }: { a: Tri
                 x.status === "ready" ? (
                   <Prov key={i} kind="live" label="Live" />
                 ) : (
-                  <Prov key={i} kind="unavailable" label={x.status === "loading" ? "Loading…" : x.status === "unavailable" && x.reason === "unsupported" ? "Out of range" : "Not connected"} />
+                  <Prov key={i} kind="unavailable" label={liveFallbackLabel(x)} />
                 ),
               )}
             </span>

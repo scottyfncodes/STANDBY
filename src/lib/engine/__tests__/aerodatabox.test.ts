@@ -3,7 +3,7 @@ import { americanAirlines } from "@/lib/airlines/american";
 import { getDestination } from "@/lib/data/destinations";
 import { adbConfigFromEnv, createAeroDataBox, dayWindows, fidsUrl, normalizeDepartures } from "@/lib/flightdata/aerodatabox";
 import { getDepartures } from "@/lib/flightdata/registry";
-import { LiveSchedule, type LiveDay } from "@/lib/providers/live";
+import { LiveSchedule, liveFallbackLabel, type LiveDay } from "@/lib/providers/live";
 import { assessTrip } from "../assess";
 import { defaultRequest } from "../discover";
 import { ItineraryEngine } from "../itinerary";
@@ -185,5 +185,15 @@ describe("live schedule in the engine", () => {
     expect(plan.primaryOut!.basis).toBe("live");
     const viaLax = engine.itineraries("DFW", "SFO", "2026-11-10").find((i) => i.via === "LAX");
     if (viaLax) expect(viaLax.basis).toBe("estimate"); // LAX→SFO wasn't fetched
+  });
+});
+
+describe("live schedule fallback labels", () => {
+  it("only says Not connected when no provider is configured", () => {
+    expect(liveFallbackLabel({ status: "unavailable", reason: "not_configured" })).toBe("Not connected");
+    expect(liveFallbackLabel({ status: "unavailable", reason: "unsupported" })).toBe("Out of range");
+    expect(liveFallbackLabel({ status: "unavailable", reason: "rate_limited" })).toBe("Unavailable");
+    expect(liveFallbackLabel({ status: "unavailable", reason: "unavailable" })).toBe("Unavailable");
+    expect(liveFallbackLabel({ status: "loading" })).toBe("Loading…");
   });
 });
