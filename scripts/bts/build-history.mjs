@@ -32,7 +32,10 @@ function months(a, b) {
   const [by, bm] = b.split("-").map(Number);
   while (y < by || (y === by && m <= bm)) {
     out.push([y, m]);
-    if (++m > 12) (m = 1), y++;
+    if (++m > 12) {
+      m = 1;
+      y++;
+    }
   }
   return out;
 }
@@ -172,7 +175,10 @@ export function mergeShiftedTimes(timeMap) {
       for (const d of dates) if (prev.dates.has(d)) overlap++;
       if (overlap <= 0.2 * Math.min(dates.size, prev.dates.size)) {
         for (const d of dates) prev.dates.add(d);
-        if (dates.size > prev.bestCount) (prev.best = t), (prev.bestCount = dates.size);
+        if (dates.size > prev.bestCount) {
+          prev.best = t;
+          prev.bestCount = dates.size;
+        }
         prev.last = t;
         continue;
       }
