@@ -65,23 +65,46 @@ Comparing the bundled reference network with as-flown BTS data for Jun 2025 – 
 - **Never pushes to `main` by design.**
   - Scheduled and manual refreshes push a `data/bts-refresh-YYYY-MM` branch and open (or update) a PR. If the repository disallows Actions-created PRs, the summary links to a compare page instead.
   - Push-triggered runs refuse to push if the branch is `main`, and branch names and outputs reach the shell only through environment variables.
-  - Note: `main` currently has no branch protection, so GitHub itself doesn't enforce review. Enabling a ruleset that requires a PR on `main` would close that gap.
+  - A repository ruleset requires a pull request to change `main`.
 - **Strict:**
   - a missing month fails the job;
   - fewer than 400 history routes or 300 load routes fails it;
   - a route count more than 20% below the previous dataset (either file) fails it.
   - Identical rebuilds don't commit; `generatedAt` is kept when nothing else changed.
 
-## Live providers (not connected; unchanged recommendation)
+## Live schedules: AeroDataBox
+
+`src/lib/flightdata/aerodatabox.ts` is a server-side adapter for AeroDataBox API v1.6 ("FIDS by local time range"). It turns on when `AERODATABOX_API_KEY` is set and stays off otherwise. With no key, `/api/flights/departures` returns `503 not_configured` and the app behaves exactly as before.
+
+| Env var | Default | Meaning |
+| --- | --- | --- |
+| `AERODATABOX_API_KEY` | (unset → off) | Key from API.Market or RapidAPI. Server-only; never sent to the browser. |
+| `AERODATABOX_MARKETPLACE` | `apimarket` | `apimarket` or `rapidapi`. Selects the base URL and auth header. |
+| `AERODATABOX_MAX_DAYS_AHEAD` | `30` | Live data is fetched only up to this many days ahead (0–365). |
+
+**How the app uses it:**
+- Live schedules are fetched **only on a trip page**, for the selected date: departures from the first origin on the outbound date, and from the destination on the return date. Discover and date comparison still use BTS history and reference data.
+- Each airport-day is two 12-hour calls, so a trip view costs at most **4 calls**. Responses are cached by Next's data cache: 5 min for today, 6 h for future dates. A per-instance rate limiter also applies.
+- One airport-day covers every American departure from that airport. Codeshares, cargo and other carriers are dropped. Cancelled flights are excluded from routing but kept in the data.
+- **Priority for each leg:** live schedule, then BTS "as flown" history, then reference estimate. A chain's basis is its weakest leg, so a route with one estimated connection is labeled "Partly estimated".
+- **Absence:** a fetched day with no flights on a leg counts as "no flights" only when it has at least 5 American departures. Thinner responses are treated as incomplete, and the app falls back.
+- **The UI shows:**
+  - flight numbers on Plan A ("List for AA 1234 at 6:05a") and on time chips;
+  - a ⚠︎ on delayed flights;
+  - "Live schedule" provenance on route cards;
+  - a live-schedule row (out/back, source and fetch time) in Evidence.
+- **Limits:** live data is a published schedule plus status. It is **not** seat availability or standby loads, and none is inferred from it.
+
+**Verification status:** the response parsing follows the published v1.6 schema (OpenAPI client models) and is covered by fixture tests. It has **not yet been checked against a real response**; do that when a key is first added. Steps: set the key on Preview, open a trip page within 30 days, and check that Evidence shows the live row and that flight numbers match aa.com.
+
+### Other providers considered
 
 | Provider | Personal-use cost | Notes |
 | --- | --- | --- |
-| AeroDataBox (RapidAPI / API.Market) | free basic tier; Pro ≈ $5/mo | Best value for this year's schedules and day-of status |
+| AeroDataBox (API.Market / RapidAPI) | RapidAPI free basic tier; API.Market Pro ≈ $5/mo | **Integrated.** Best value for this year's schedules and day-of status |
 | FlightAware AeroAPI | Personal tier, ~$5/mo credit, then per query | Per-record billing; history on paid tiers |
 | Aviationstack | $49.99/mo for future schedules | Poor value here |
 | Cirium / OAG | enterprise quotes | Out of budget |
-
-The provider-independent layer (`src/lib/flightdata/`, `/api/flights/departures`) returns `not_configured` until a provider is authorized and its adapter is verified against real flights.
 
 ## Known limitations
 

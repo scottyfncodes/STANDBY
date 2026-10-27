@@ -68,9 +68,9 @@ describe("provider honesty", () => {
       expect(s.find((x) => x.id === id)!.state).not.toBe("connected");
     }
   });
-  it("does not claim a live schedule just because a key exists", () => {
-    const s = providerStatuses({ AERODATABOX_API_KEY: "x" });
-    expect(s.find((x) => x.id === "schedules")!.state).toBe("not_available");
+  it("reports live schedules as connected only when a key is configured", () => {
+    expect(providerStatuses({ AERODATABOX_API_KEY: "x" }).find((x) => x.id === "schedules")!.state).toBe("connected");
+    expect(providerStatuses({}).find((x) => x.id === "schedules")!.state).toBe("not_configured");
   });
   it("represents every unverified AA employee rule as unknown", () => {
     expect(americanAirlines.employeeRules.every((r) => r.value.status === "unknown")).toBe(true);

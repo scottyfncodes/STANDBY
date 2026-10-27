@@ -131,10 +131,11 @@ describe("flight-data layer", () => {
     const res = await getDepartures({ ...q, airport: "ZZZ" }, []);
     expect(!res.ok && res.reason).toBe("invalid_request");
   });
-  it("does not claim the AeroDataBox adapter works just because a key is present", async () => {
+  it("explains that a key is needed when no provider is configured", async () => {
     const { configuredProviders } = await import("@/lib/flightdata/registry");
-    const res = await getDepartures({ ...q, date: "2026-11-12" }, configuredProviders({ AERODATABOX_API_KEY: "k" }));
-    expect(!res.ok && res.reason).toBe("not_implemented");
+    const res = await getDepartures({ ...q, date: "2026-11-12" }, configuredProviders({}));
+    expect(!res.ok && res.reason).toBe("not_configured");
+    expect(!res.ok && res.detail).toMatch(/AeroDataBox needs an API key/);
   });
 });
 

@@ -4,7 +4,7 @@ import type { Destination } from "@/lib/data/destinations";
 import type { AirportCode, DataProvenance, ISODate, RiskTolerance, TripRequest } from "@/lib/domain/types";
 import { assessParty, type Party, type PartyAssessment } from "@/lib/eligibility/party";
 import { assessDemand, type DemandAssessment, type DemandLevel } from "./calendar";
-import { arrivingBy, dayOptions, summarizePaths, type DayOptions, type ItineraryEngine } from "./itinerary";
+import { arrivingBy, dayOptions, summarizePaths, weakestBasis, type DayOptions, type ItineraryEngine } from "./itinerary";
 import { addDays, diffDays, monthOf } from "./time";
 import { loadBand } from "@/lib/providers/loads";
 
@@ -136,7 +136,11 @@ export function assessTrip(input: AssessInput): TripAssessment {
   const altNote = (all: number, primary: number) =>
     all > primary ? ` (${primary} at ${primaryDest}, ${all - primary} more via alternate airports)` : "";
 
-  const scheduleBasis = (d: DayOptions): Factor["basis"] => (d.itineraries.length && d.itineraries.every((i) => i.basis === "historical") ? "historical" : "reference");
+  const scheduleBasis = (d: DayOptions): Factor["basis"] => {
+    if (!d.itineraries.length) return "reference";
+    const w = weakestBasis(d.itineraries.map((i) => i.basis));
+    return w === "estimate" ? "reference" : w;
+  };
 
   const factors: Factor[] = [];
   const impact = (s: number): Impact => (s >= 0.66 ? "helps" : s >= 0.4 ? "neutral" : "hurts");
