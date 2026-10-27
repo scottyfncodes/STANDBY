@@ -52,10 +52,10 @@ export function splitCsv(line) {
  */
 export function aggregateMonth(csv, airports, totals = new Map()) {
   const lines = csv.split(/\r?\n/);
-  const header = splitCsv(lines[0] ?? "").map((h) => h.trim().replace(/"/g, ""));
+  const header = splitCsv((lines[0] ?? "").replace(/^\uFEFF/, "")).map((h) => h.trim().replace(/"/g, "").toUpperCase());
   const ix = Object.fromEntries(FIELDS.map((f) => [f, header.indexOf(f)]));
   const missing = FIELDS.filter((f) => ix[f] < 0);
-  if (missing.length) throw new Error(`T-100 CSV is missing columns: ${missing.join(", ")}`);
+  if (missing.length) throw new Error(`T-100 CSV is missing columns: ${missing.join(", ")} (header starts: ${JSON.stringify((lines[0] ?? "").slice(0, 300))})`);
   let kept = 0;
   for (let i = 1; i < lines.length; i++) {
     if (!lines[i]) continue;
@@ -127,7 +127,11 @@ async function downloadMonth(ym, dir) {
     if (res.ok && buf.subarray(0, 2).toString() === "PK") {
       const zip = path.join(dir, `t100_${ym}.zip`);
       writeFileSync(zip, buf);
-      return execFileSync("unzip", ["-p", zip], { maxBuffer: 1024 * 1024 * 512 }).toString("utf8");
+      // The zip may include a readme next to the data; read only the CSV member.
+      const members = execFileSync("unzip", ["-Z1", zip]).toString().split("\n").filter(Boolean);
+      const csvName = members.find((n) => n.toLowerCase().endsWith(".csv"));
+      if (!csvName) throw new Error(`T-100 zip for ${ym} has no CSV (members: ${members.join(", ")})`);
+      return execFileSync("unzip", ["-p", zip, csvName], { maxBuffer: 1024 * 1024 * 512 }).toString("utf8").replace(/^\uFEFF/, "");
     }
     console.log(`  ${ym}: attempt ${attempt} returned ${res.status} ${res.headers.get("content-type")}`);
     await new Promise((r) => setTimeout(r, 5000 * attempt));
