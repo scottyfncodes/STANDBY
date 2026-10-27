@@ -19,7 +19,8 @@ import type { FlightHistory } from "@/lib/providers/history";
 import { LiveSchedule, liveFallbackLabel } from "@/lib/providers/live";
 import { LOAD_BAND_LABEL, loadBand, type FlightLoads } from "@/lib/providers/loads";
 import { assessParty } from "@/lib/eligibility/party";
-import { useFlightHistory, useFlightLoads, useLiveDay, useToday, type LiveState } from "./hooks";
+import { FareCard } from "./FareCard";
+import { useFare, useFlightHistory, useFlightLoads, useLiveDay, useToday, type FareState, type LiveState } from "./hooks";
 import { Icon, type IconName } from "./icons";
 import { useStore } from "./store";
 import { PostcardArt, Prov, RouteDiagram, Segmented, TierBadge } from "./ui";
@@ -79,6 +80,15 @@ export function TripView({ destinationId }: { destinationId: string }) {
     [planEngine, assessment, destination, request],
   );
   const liveStates = { out: liveOut, back: liveBack };
+  // Public fares for the "buy a confirmed seat" backup. Fetched only by the tabs that show them.
+  const fareA = assessment ?? selected?.assessment;
+  const fares: FareQueries | undefined =
+    fareA && selected
+      ? {
+          out: { from: fareA.homeAirports, to: fareA.destAirports, date: selected.date, airline: airline.code, airlineName: airline.name },
+          back: { from: fareA.destAirports, to: fareA.homeAirports, date: selected.returnDate, airline: airline.code, airlineName: airline.name },
+        }
+      : undefined;
 
   const climate = useClimate(destination.airports[0]!);
   const query = request ? encodeRequest(request).toString() : "";
@@ -151,9 +161,9 @@ export function TripView({ destinationId }: { destinationId: string }) {
             {tab === "plan" && <PlanTab a={assessment ?? selected.assessment} plan={plan} destination={destination} request={request} climate={climate} isBest={best?.date === selected.date} best={best} onPick={pickDate} goTo={setTab} history={history} />}
             {tab === "dates" && <DatesTab comparison={comparison} selected={selected.date} onPick={pickDate} destination={destination} request={request} climate={climate} engine={engine} />}
             {tab === "routes" && <RoutesTab plan={plan} a={assessment ?? selected.assessment} history={history} loads={loads} live={liveStates} />}
-            {tab === "backups" && <BackupsTab plan={plan} />}
-            {tab === "home" && <HomeTab plan={plan} a={assessment ?? selected.assessment} request={request} />}
-            {tab === "evidence" && <EvidenceTab a={assessment ?? selected.assessment} airlineName={airline.name} climate={climate} history={history} loads={loads} live={liveStates} />}
+            {tab === "backups" && <BackupsTab plan={plan} fares={fares!} />}
+            {tab === "home" && <HomeTab plan={plan} a={assessment ?? selected.assessment} request={request} fares={fares!} />}
+            {tab === "evidence" && <EvidenceTab a={assessment ?? selected.assessment} airlineName={airline.name} climate={climate} history={history} loads={loads} live={liveStates} fares={fares!} />}
           </div>
         </>
       )}
@@ -706,7 +716,7 @@ function FallbackList({ items }: { items: FallbackOption[] }) {
   );
 }
 
-function BackupsTab({ plan }: { plan: TripPlan }) {
+function BackupsTab({ plan, fares }: { plan: TripPlan; fares: FareQueries }) {
   return (
     <div className="stack-lg">
       <p className="small" style={{ margin: 0 }}>
@@ -717,12 +727,14 @@ function BackupsTab({ plan }: { plan: TripPlan }) {
           Getting there
         </h2>
         <FallbackList items={plan.outboundFallbacks} />
+        <FareCard {...fares.out} />
       </section>
       <section className="card" style={{ padding: 16 }}>
         <h2 className="h2" style={{ fontSize: 20, marginBottom: 10 }}>
           Getting home
         </h2>
         <FallbackList items={plan.returnFallbacks} />
+        <FareCard {...fares.back} />
       </section>
     </div>
   );
@@ -730,7 +742,9 @@ function BackupsTab({ plan }: { plan: TripPlan }) {
 
 // ——— Getting home
 
-function HomeTab({ plan, a, request }: { plan: TripPlan; a: TripAssessment; request: TripRequest }) {
+type FareQueries = { out: Parameters<typeof FareCard>[0]; back: Parameters<typeof FareCard>[0] };
+
+function HomeTab({ plan, a, request, fares }: { plan: TripPlan; a: TripAssessment; request: TripRequest; fares: FareQueries }) {
   const rp = plan.returnPlan;
   const max = Math.max(1, ...rp.days.map((d) => d.attempts));
   return (
@@ -783,6 +797,8 @@ function HomeTab({ plan, a, request }: { plan: TripPlan; a: TripAssessment; requ
         </div>
       )}
 
+      <FareCard {...fares.back} />
+
       <section className="panel">
         <h3 className="h3">Last flights of the day</h3>
         <ul className="list-plain" style={{ marginTop: 6 }}>
@@ -815,7 +831,9 @@ function HomeTab({ plan, a, request }: { plan: TripPlan; a: TripAssessment; requ
 const IMPACT_CLASS = { helps: "tone-good", neutral: "tone-ok", hurts: "tone-caution" } as const;
 const IMPACT_LABEL = { helps: "Helps", neutral: "Neutral", hurts: "Hurts" } as const;
 
-function EvidenceTab({ a, airlineName, climate, history, loads, live }: { a: TripAssessment; airlineName: string; climate: ClimateState; history?: FlightHistory; loads?: FlightLoads; live: { out: LiveState; back: LiveState } }) {
+function EvidenceTab({ a, airlineName, climate, history, loads, live, fares }: { a: TripAssessment; airlineName: string; climate: ClimateState; history?: FlightHistory; loads?: FlightLoads; live: { out: LiveState; back: LiveState }; fares: FareQueries }) {
+  const fareOut = useFare(fares.out.from, fares.out.to, fares.out.date, fares.out.airline);
+  const fareBack = useFare(fares.back.from, fares.back.to, fares.back.date, fares.back.airline);
   return (
     <div className="stack-lg">
       <section className="card" style={{ padding: 16 }}>
@@ -895,8 +913,10 @@ function EvidenceTab({ a, airlineName, climate, history, loads, live }: { a: Tri
             <Prov kind="unavailable" />
           </li>
           <li className="between">
-            <span>Public fares</span>
-            <Prov kind="unavailable" />
+            <span>Public fares (backup ticket out / home)</span>
+            <span className="row" style={{ gap: 4 }}>
+              {[fareOut, fareBack].map((x: FareState, i) => (x.status === "ready" ? <Prov key={i} kind="live" label="Google Flights" /> : <Prov key={i} kind="unavailable" label={liveFallbackLabel(x)} />))}
+            </span>
           </li>
         </ul>
       </section>

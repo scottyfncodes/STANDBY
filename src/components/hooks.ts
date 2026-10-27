@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { todayIn } from "@/lib/engine/time";
 import { createHistory, isHistoryFile, type FlightHistory } from "@/lib/providers/history";
 import { createLoads, isLoadsFile, type FlightLoads } from "@/lib/providers/loads";
+import type { FareQuote } from "@/lib/fares/types";
+import type { DataProvenance } from "@/lib/domain/types";
 import type { LiveDay } from "@/lib/providers/live";
 
 /** Today's date in the device's zone, resolved after mount to avoid hydration mismatch. */
@@ -96,5 +98,44 @@ export function useLiveDay(airport: string | undefined, date: string | undefined
       alive = false;
     };
   }, [airport, date, carrier]);
+  return state;
+}
+
+export type FareState = { status: "idle" } | { status: "loading" } | { status: "ready"; quote: FareQuote; provenance: DataProvenance } | { status: "unavailable"; reason: string; detail: string };
+
+const fareCache = new Map<string, Promise<FareState>>();
+
+/**
+ * Cheapest public one-way fare, via the server (the provider key never reaches the browser).
+ * Only requested by the components that show it, and once per page load per query.
+ */
+export function useFare(from: string[] | undefined, to: string[] | undefined, date: string | undefined, airline = "AA"): FareState {
+  const [state, setState] = useState<FareState>({ status: "idle" });
+  const fromKey = from?.join(",") ?? "";
+  const toKey = to?.join(",") ?? "";
+  useEffect(() => {
+    if (!fromKey || !toKey || !date) {
+      setState({ status: "idle" });
+      return;
+    }
+    const qs = new URLSearchParams({ from: fromKey, to: toKey, date, airline }).toString();
+    let p = fareCache.get(qs);
+    if (!p) {
+      p = fetch(`/api/fares?${qs}`)
+        .then(async (r): Promise<FareState> => {
+          const body = (await r.json()) as { ok: boolean; data?: FareQuote; provenance?: DataProvenance; reason?: string; detail?: string };
+          if (body.ok && body.data && body.provenance) return { status: "ready", quote: body.data, provenance: body.provenance };
+          return { status: "unavailable", reason: body.reason ?? "unavailable", detail: body.detail ?? "" };
+        })
+        .catch((): FareState => ({ status: "unavailable", reason: "unavailable", detail: "Fare request failed." }));
+      fareCache.set(qs, p);
+    }
+    let alive = true;
+    setState({ status: "loading" });
+    p.then((s) => alive && setState(s));
+    return () => {
+      alive = false;
+    };
+  }, [fromKey, toKey, date, airline]);
   return state;
 }
