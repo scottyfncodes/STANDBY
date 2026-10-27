@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { getAirline } from "@/lib/airlines/registry";
 import { getAirport } from "@/lib/data/airports";
 import { getDestination, type Destination } from "@/lib/data/destinations";
@@ -23,7 +23,7 @@ import { FareCard } from "./FareCard";
 import { useFare, useFlightHistory, useFlightLoads, useLiveDay, useToday, type FareState, type LiveState } from "./hooks";
 import { Icon, type IconName } from "./icons";
 import { useStore } from "./store";
-import { PostcardArt, Prov, RouteDiagram, Segmented, TierBadge } from "./ui";
+import { EmptyState, FlightStrip, PostcardArt, Prov, RouteDiagram, SectionHead, Segmented, TierBadge } from "./ui";
 
 type Tab = "plan" | "dates" | "routes" | "backups" | "home" | "evidence";
 const TABS: { id: Tab; label: string }[] = [
@@ -99,65 +99,57 @@ export function TripView({ destinationId }: { destinationId: string }) {
   };
 
   return (
-    <main className="page">
+    <main className="page trip-page">
       <div className="postcard trip-hero">
         <PostcardArt destination={destination} />
-        <div style={{ position: "absolute", top: "calc(env(safe-area-inset-top) + 12px)", left: "var(--gutter)", right: "var(--gutter)" }} className="between">
-          <Link href={`/?${query}`} className="icon-btn" aria-label="Back to results" style={{ background: "rgba(255,255,255,.85)", color: "var(--ink)", borderColor: "transparent" }}>
+        <div className="between trip-hero-nav">
+          <Link href={`/?${query}`} className="icon-btn on-art" aria-label="Back to results">
             <Icon name="arrowLeft" size={18} />
           </Link>
           {selected && (
             <button
               type="button"
-              className="icon-btn"
+              className="icon-btn on-art"
               aria-pressed={isSaved(saveId)}
               aria-label={isSaved(saveId) ? "Remove from saved" : "Save trip"}
-              style={{ background: isSaved(saveId) ? "var(--sun)" : "rgba(255,255,255,.85)", color: "var(--ink)", borderColor: "transparent" }}
               onClick={() => toggleSaved({ id: saveId, destinationId: destination.id, query: `${query}&d=${selected.date}`, date: selected.date })}
             >
               <Icon name="bookmark" size={18} fill={isSaved(saveId) ? "currentColor" : "none"} />
             </button>
           )}
         </div>
-        <p className="eyebrow" style={{ color: "rgba(255,255,255,.8)", margin: 0 }}>
-          {destination.region}
+        <p className="eyebrow" style={{ color: "rgba(255,255,255,.85)", margin: 0 }}>
+          {destination.region} · {destination.airports.join(" / ")}
         </p>
-        <h1 className="postcard-name" style={{ fontSize: 40 }}>
-          {destination.name}
-        </h1>
+        <h1 className="postcard-name">{destination.name}</h1>
         {selected && (
-          <div className="row" style={{ marginTop: 10, flexWrap: "wrap" }}>
+          <div className="row" style={{ marginTop: 12, flexWrap: "wrap", rowGap: 8 }}>
             <TierBadge tier={(assessment ?? selected.assessment).tier} />
-            <span style={{ fontSize: 14, fontWeight: 600 }} className="mono">
-              {formatDate(selected.date)} → {formatDate(selected.returnDate)}
+            <span className="trip-dates">
+              {formatDate(selected.date)}
+              <span className="arrow" aria-label="to">
+                →
+              </span>
+              {formatDate(selected.returnDate)}
             </span>
           </div>
         )}
       </div>
 
       {!comparison || !request ? (
-        <div className="stack" style={{ marginTop: 20 }}>
-          <div className="skeleton" style={{ height: 48 }} />
-          <div className="skeleton" style={{ height: 280 }} />
-        </div>
+        <TripLoading />
       ) : !selected || !plan ? (
         <NoOptions destination={destination} comparison={comparison} query={query} />
       ) : (
         <>
-          <div className="tabs" role="tablist" aria-label="Trip sections">
-            {TABS.map((t) => (
-              <button key={t.id} role="tab" aria-selected={tab === t.id} onClick={() => setTab(t.id)} type="button">
-                {t.label}
-              </button>
-            ))}
-          </div>
+          <TabStrip tab={tab} onChange={setTab} />
           {wanted && wanted !== selected.date && (
-            <div className="notice" style={{ marginTop: 8 }}>
+            <div className="notice" style={{ marginTop: 12 }}>
               <Icon name="info" size={18} />
               <span>{formatDate(wanted)} isn’t available for this search, so we’re showing {formatDate(selected.date)}.</span>
             </div>
           )}
-          <div style={{ marginTop: 12 }} className="narrow">
+          <div key={tab} className="tab-panel" role="tabpanel" id="trip-panel" aria-label={TABS.find((t) => t.id === tab)!.label}>
             {tab === "plan" && <PlanTab a={assessment ?? selected.assessment} plan={plan} destination={destination} request={request} climate={climate} isBest={best?.date === selected.date} best={best} onPick={pickDate} goTo={setTab} history={history} />}
             {tab === "dates" && <DatesTab comparison={comparison} selected={selected.date} onPick={pickDate} destination={destination} request={request} climate={climate} engine={engine} />}
             {tab === "routes" && <RoutesTab plan={plan} a={assessment ?? selected.assessment} history={history} loads={loads} live={liveStates} />}
@@ -168,6 +160,37 @@ export function TripView({ destinationId }: { destinationId: string }) {
         </>
       )}
     </main>
+  );
+}
+
+/** Sticky section tabs. Keeps the active tab scrolled into view on narrow phones. */
+function TabStrip({ tab, onChange }: { tab: Tab; onChange: (t: Tab) => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = ref.current?.querySelector<HTMLElement>('[aria-selected="true"]');
+    el?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
+  }, [tab]);
+  return (
+    <div ref={ref} className="tabs" role="tablist" aria-label="Trip sections">
+      {TABS.map((t) => (
+        <button key={t.id} role="tab" aria-selected={tab === t.id} aria-controls="trip-panel" onClick={() => onChange(t.id)} type="button">
+          {t.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function TripLoading() {
+  return (
+    <div className="stack" style={{ marginTop: 20 }} aria-busy="true">
+      <span className="loading-note" role="status">
+        Reading schedules and flight history…
+      </span>
+      <div className="skeleton" style={{ height: 48, borderRadius: 12 }} />
+      <div className="skeleton" style={{ height: 220 }} />
+      <div className="skeleton" style={{ height: 140 }} />
+    </div>
   );
 }
 
@@ -208,12 +231,13 @@ function PlanTab({ a, plan, destination, request, climate, isBest, best, onPick,
   const month = monthOf(a.outboundDate);
   const c = climateFor(destination, climate, month);
   const rp = plan.returnPlan;
+  const firstBack = plan.primaryBack?.options.find((o) => !o.overnightConnection);
   return (
     <div className="stack-lg">
-      <p style={{ margin: 0, fontSize: 15.5, color: "var(--ink-2)" }}>{a.headline}</p>
+      <p className="headline">{a.headline}</p>
 
       {!isBest && best && (
-        <button type="button" className="notice" style={{ border: 0, width: "100%", textAlign: "left" }} onClick={() => onPick(best.date)}>
+        <button type="button" className="notice" onClick={() => onPick(best.date)}>
           <Icon name="calendar" size={18} />
           <span>
             Comparing every date in your window, <strong>{formatDate(best.date)}</strong> ranks a little better ({TIER_COPY[best.assessment.tier].label.toLowerCase()}). Tap to switch.
@@ -221,28 +245,34 @@ function PlanTab({ a, plan, destination, request, climate, isBest, best, onPick,
         </button>
       )}
 
-      <section className="card" style={{ padding: 16 }}>
+      <section className="card pad accent-sun" aria-labelledby="plan-a">
         <div className="between">
-          <span className="plan-label">Plan A</span>
-          <span className="small">{formatDate(a.outboundDate)}</span>
+          <span className="row" style={{ gap: 8 }}>
+            <span className="plan-label" id="plan-a">
+              Plan A
+            </span>
+            <span className="small strong">Getting there</span>
+          </span>
+          <span className="small num">{formatDate(a.outboundDate)}</span>
         </div>
         {plan.primaryOut && first ? (
           <>
-            <div style={{ marginTop: 26 }}>
-              <RouteDiagram origin={plan.primaryOut.origin} via={plan.primaryOut.via} destination={plan.primaryOut.destination} legDaily={plan.primaryOut.legDaily} />
+            <div style={{ marginTop: 16 }}>
+              <FlightStrip it={first}>
+                <BasisProv it={first} />
+              </FlightStrip>
             </div>
             <p style={{ margin: "14px 0 0", fontSize: 15 }}>
               {first.legs[0]!.flight ? (
                 <>
-                  List for <strong>{first.legs[0]!.flight} at {formatTime(first.legs[0]!.depLocal.time)}</strong>, the first departure from {getAirport(first.origin)?.city}.
+                  List for <strong>{first.legs[0]!.flight}</strong>, the first departure from {getAirport(first.origin)?.city}
                 </>
               ) : (
                 <>
-                  List for the <strong>first departure, around {formatTime(first.legs[0]!.depLocal.time)}</strong> from {getAirport(first.origin)?.city}.
+                  List for the <strong>first departure</strong> from {getAirport(first.origin)?.city}
                 </>
-              )}{" "}
-              Arrive {first.basis === "live" ? "" : "about "}{formatTime(first.legs[first.legs.length - 1]!.arrLocal.time)}
-              {first.arrivesLaterDay ? " the next day" : ""} local time · {formatDuration(first.totalMin)}.
+              )}
+. Times are local{plan.primaryOut.legDaily.length ? `; ~${Math.min(...plan.primaryOut.legDaily)} flights a day on this ${plan.primaryOut.via ? "routing" : "route"}` : ""}.
             </p>
             <p className="tiny" style={{ margin: "6px 0 0" }}>
               {first.legs[0]!.basis === "live" ? "From the published schedule (live). Confirm on aa.com before you go." : <ScheduleSourceNote date={a.outboundDate} history={history} />}
@@ -252,32 +282,47 @@ function PlanTab({ a, plan, destination, request, climate, isBest, best, onPick,
           <p className="small">No same-day routing found.</p>
         )}
 
-        <hr className="divider" />
-        <h3 className="h3">If it doesn’t clear</h3>
-        <div style={{ marginTop: 10 }}>
-          {plan.outboundFallbacks.slice(0, 2).map((f, i) => (
-            <div key={f.title} className="row" style={{ alignItems: "flex-start", marginTop: i ? 10 : 0 }}>
-              <span className="plan-label b">Plan {String.fromCharCode(66 + i)}</span>
-              <div>
-                <div style={{ fontWeight: 650, fontSize: 15 }}>{f.title}</div>
-                <div className="small">{f.detail}</div>
+        <hr className="divider perf" />
+        <h3 className="eyebrow" style={{ margin: "0 0 10px" }}>
+          If it doesn’t clear
+        </h3>
+        {plan.outboundFallbacks.slice(0, 2).map((f, i) => (
+          <div key={f.title} className="alt">
+            <span className="plan-label b">Plan {String.fromCharCode(66 + i)}</span>
+            <div>
+              <div className="alt-title">{f.title}</div>
+              <div className="small" style={{ marginTop: 2 }}>
+                {f.detail}
               </div>
             </div>
-          ))}
-          <button type="button" className="btn btn-ghost" style={{ marginTop: 14, minHeight: 38, fontSize: 14 }} onClick={() => goTo("backups")}>
-            All backups <Icon name="arrowRight" size={16} />
-          </button>
-        </div>
+          </div>
+        ))}
+        <button type="button" className="link-btn" style={{ marginTop: 4 }} onClick={() => goTo("backups")}>
+          All {plan.outboundFallbacks.length} backups <Icon name="arrowRight" size={16} />
+        </button>
       </section>
 
-      <section className="card" style={{ padding: 16 }}>
-        <div className="between">
-          <h3 className="h3 row" style={{ gap: 8 }}>
-            <Icon name="home" size={18} /> Getting home
-          </h3>
+      <section className="card pad accent-ink" aria-labelledby="plan-home">
+        <div className="between" style={{ flexWrap: "wrap", rowGap: 8 }}>
+          <span className="row" style={{ gap: 8 }}>
+            <span className="plan-label ink" id="plan-home">
+              Home
+            </span>
+            <span className="small strong">Getting back</span>
+          </span>
           <DeadlineBadge risk={rp.deadlineRisk} />
         </div>
-        <p style={{ margin: "10px 0 0", fontSize: 15 }}>
+        {firstBack && (
+          <div style={{ marginTop: 16 }}>
+            <FlightStrip it={firstBack}>
+              <BasisProv it={firstBack} />
+              <span className="small num" style={{ marginLeft: "auto" }}>
+                {formatDate(a.returnDate)}
+              </span>
+            </FlightStrip>
+          </div>
+        )}
+        <p style={{ margin: "14px 0 0", fontSize: 15 }}>
           {plan.primaryBack ? (
             <>
               Start with the first <strong>{plan.primaryBack.via ? `${plan.primaryBack.origin} → ${plan.primaryBack.via} → ${plan.primaryBack.destination}` : `${plan.primaryBack.origin}–${plan.primaryBack.destination} nonstop`}</strong> on {formatDate(a.returnDate)}.{" "}
@@ -285,16 +330,14 @@ function PlanTab({ a, plan, destination, request, climate, isBest, best, onPick,
           ) : null}
           {rp.advice}
         </p>
-        <button type="button" className="btn btn-ghost" style={{ marginTop: 12, minHeight: 38, fontSize: 14 }} onClick={() => goTo("home")}>
+        <button type="button" className="link-btn" style={{ marginTop: 4 }} onClick={() => goTo("home")}>
           Return options <Icon name="arrowRight" size={16} />
         </button>
       </section>
 
       <section>
-        <h2 className="h2" style={{ fontSize: 20 }}>
-          Suggested sequence
-        </h2>
-        <div style={{ marginTop: 12 }}>
+        <SectionHead title="Suggested sequence" />
+        <div>
           {plan.sequence.map((s, i) => (
             <div className="plan-step" key={s}>
               <span className="plan-num">{i + 1}</span>
@@ -305,12 +348,14 @@ function PlanTab({ a, plan, destination, request, climate, isBest, best, onPick,
       </section>
 
       {a.risks.length > 0 && (
-        <section className="panel">
-          <h3 className="h3">Main risks</h3>
+        <section className="panel" style={{ borderColor: "color-mix(in srgb, var(--warn) 30%, var(--line))" }}>
+          <h3 className="h3 row" style={{ gap: 8, color: "var(--warn)" }}>
+            <Icon name="alert" size={16} /> Main risks
+          </h3>
           <ul className="list-plain" style={{ marginTop: 6 }}>
             {a.risks.map((r) => (
               <li key={r} className="row" style={{ alignItems: "flex-start" }}>
-                <Icon name="alert" size={16} style={{ color: "var(--warn)", flex: "none", marginTop: 2 }} />
+                <span style={{ width: 5, height: 5, borderRadius: 3, background: "var(--warn)", flex: "none", marginTop: 8 }} />
                 {r}
               </li>
             ))}
@@ -321,9 +366,7 @@ function PlanTab({ a, plan, destination, request, climate, isBest, best, onPick,
       <section className="grid-2">
         <div className="panel">
           <div className="eyebrow">{monthName(month, true)} weather</div>
-          <div style={{ fontFamily: "var(--serif)", fontSize: 30, fontWeight: 600, marginTop: 4 }} className="mono">
-            {Math.round(c.high)}°F
-          </div>
+          <div className="figure">{Math.round(c.high)}°F</div>
           <div className="tiny">
             avg. daily high{c.wetDays !== undefined ? ` · ~${Math.round(c.wetDays)} wet days` : ""}
           </div>
@@ -331,7 +374,7 @@ function PlanTab({ a, plan, destination, request, climate, isBest, best, onPick,
         </div>
         <div className="panel">
           <div className="eyebrow">Your party</div>
-          <div style={{ fontFamily: "var(--serif)", fontSize: 30, fontWeight: 600, marginTop: 4 }}>
+          <div className="figure">
             {party.seatsNeeded} seat{party.seatsNeeded === 1 ? "" : "s"}
           </div>
           <div className="tiny">{profile.party.mustTravelTogether ? "on the same flight" : "can split up"}</div>
@@ -355,6 +398,13 @@ function PlanTab({ a, plan, destination, request, climate, isBest, best, onPick,
       )}
     </div>
   );
+}
+
+/** Where an itinerary's times come from, as a provenance tag. */
+function BasisProv({ it }: { it: Itinerary }) {
+  if (it.legs[0]!.basis === "live") return <Prov kind="live" label="Published schedule" />;
+  if (it.basis === "historical") return <Prov kind="historical" label="As flown last year" />;
+  return <Prov kind="estimate" label={it.legs.some((l) => l.basis !== "estimate") ? "Partly estimated" : "Estimated time"} />;
 }
 
 function DeadlineBadge({ risk }: { risk: TripPlan["returnPlan"]["deadlineRisk"] }) {
@@ -390,12 +440,8 @@ function DatesTab({ comparison, selected, onPick, destination, request, climate,
   return (
     <div className="stack-lg">
       <div>
-        <div className="between">
-          <h2 className="h2" style={{ fontSize: 20 }}>
-            Compare departure dates
-          </h2>
-        </div>
-        <p className="small" style={{ margin: "6px 0 12px" }}>
+        <SectionHead title="Compare departure dates" aside={<span className="tiny num">{comparison.options.length} dates</span>} />
+        <p className="small" style={{ margin: "0 0 12px" }}>
           Each date includes your {request.nights}-night return. Bars show calendar demand (out / back). STANDBY’s reference schedules don’t vary by weekday, so differences between ordinary weekdays come only from general patterns — treat them as low confidence.
         </p>
         <Segmented<"best" | "date">
@@ -426,13 +472,23 @@ function DatesTab({ comparison, selected, onPick, destination, request, climate,
             <span style={{ minWidth: 0 }}>
               <span className="row" style={{ gap: 8, flexWrap: "wrap" }}>
                 <TierBadge tier={o.assessment.tier} short />
-                {o.date === bestDate && <span className="badge plain" style={{ background: "var(--sun)", color: "var(--night)" }}>Best</span>}
+                {o.date === bestDate && <span className="badge plain sun">Best</span>}
               </span>
               <span className="row tiny" style={{ marginTop: 6, gap: 6 }}>
-                Out <Meter level={o.assessment.demandOut.level} /> Back <Meter level={o.assessment.demandBack.level} />
+                Out <Meter level={o.assessment.demandOut.level} />
+                <span style={{ marginLeft: 4 }}>Back</span> <Meter level={o.assessment.demandBack.level} />
               </span>
-              <span className="tiny" style={{ display: "block", marginTop: 4, color: "var(--ink-2)" }}>
-                {dateReason(o)}
+              <span className="num" style={{ display: "block", marginTop: 6, fontSize: 14, fontWeight: 650 }}>
+                ~{o.assessment.outbound.depth} ways in <span style={{ color: "var(--faint)" }}>·</span> ~{o.assessment.inbound.depth} home
+                {o.assessment.slackDays !== null && (
+                  <>
+                    {" "}
+                    <span style={{ color: "var(--faint)" }}>·</span> {o.assessment.slackDays === 0 ? "no spare days" : `${o.assessment.slackDays} spare day${o.assessment.slackDays === 1 ? "" : "s"}`}
+                  </>
+                )}
+              </span>
+              <span className="tiny" style={{ display: "block", marginTop: 2 }}>
+                {dateSignals(o)}
               </span>
             </span>
             <Icon name="chevronRight" size={18} style={{ color: "var(--faint)" }} />
@@ -443,7 +499,9 @@ function DatesTab({ comparison, selected, onPick, destination, request, climate,
       {comparison.excluded.length > 0 && (
         <details className="disclosure panel">
           <summary className="between">
-            <span style={{ fontWeight: 650 }}>Dates that don’t work ({comparison.excluded.length})</span>
+            <span style={{ fontWeight: 650 }}>
+              Dates that don’t work <span className="num" style={{ color: "var(--muted)" }}>({comparison.excluded.length})</span>
+            </span>
             <Icon name="chevronDown" size={18} />
           </summary>
           <ul className="list-plain" style={{ marginTop: 8 }}>
@@ -461,15 +519,15 @@ function DatesTab({ comparison, selected, onPick, destination, request, climate,
   );
 }
 
-function dateReason(o: DateOption): string {
+/** The strongest demand signal each way, in plain words. */
+function dateSignals(o: DateOption): string {
   const a = o.assessment;
   const strongest = (signals: { text: string; weight: number }[]) => [...signals].sort((x, y) => Math.abs(y.weight) - Math.abs(x.weight))[0];
   const out = strongest(a.demandOut.signals);
   const back = strongest(a.demandBack.signals);
-  const parts = [`~${a.outbound.depth} ways in, ~${a.inbound.depth} home`];
+  const parts: string[] = [];
   if (out) parts.push(`Out: ${out.text}`);
   if (back && back.text !== out?.text) parts.push(`Back: ${back.text}`);
-  if (a.slackDays !== null) parts.push(a.slackDays === 0 ? "no spare days" : `${a.slackDays} spare day${a.slackDays === 1 ? "" : "s"}`);
   return parts.join(" · ");
 }
 
@@ -482,10 +540,8 @@ function SeasonOverview({ destination, request, climate, engine }: { destination
   const served = (m: number) => request.origins.some((o) => network.route(o, primary, m)) || engine.airline.hubs.some((h) => network.route(h, primary, m));
   return (
     <section>
-      <h2 className="h2" style={{ fontSize: 20 }}>
-        The year at a glance
-      </h2>
-      <p className="small" style={{ margin: "6px 0 12px" }}>
+      <SectionHead title="The year at a glance" />
+      <p className="small" style={{ margin: "0 0 12px" }}>
         Average highs, typical demand season and whether {primary} has {engine.airline.code} service that month.
       </p>
       <div className="months">
@@ -537,7 +593,11 @@ function RoutesTab({ plan, a, history, loads, live }: { plan: TripPlan; a: TripA
           </span>
         </div>
       </div>
-      {paths.length === 0 && <div className="panel">No routings found for {formatDate(date)}.</div>}
+      {paths.length === 0 && (
+        <EmptyState icon="route" title="No routings that day">
+          STANDBY found no {dir === "out" ? "outbound" : "return"} routings for {formatDate(date)} in the reference network. Try another date on the Dates tab.
+        </EmptyState>
+      )}
       {paths.slice(0, 8).map((p, i) => (
         <PathCard key={p.key} p={p} recommended={i === 0} history={history} loads={loads} />
       ))}
@@ -580,40 +640,60 @@ function PathCard({ p, recommended, history, loads }: { p: PathSummary; recommen
   const last = sameDay[sameDay.length - 1];
   const legs = p.via ? [[p.origin, p.via], [p.via, p.destination]] : [[p.origin, p.destination]];
   const reliability = legs.map(([f, t]) => ({ f: f!, t: t!, r: history?.reliability(f!, t!) })).filter((x) => x.r && x.r.n >= 30);
+  const loadRows = routeLoads(p, loads);
   return (
-    <div className="card" style={{ padding: 16 }}>
-      <div className="between">
-        <span className="small" style={{ fontWeight: 650 }}>
-          {p.via ? `Connect in ${getAirport(p.via)?.city}` : "Nonstop"}
-        </span>
-        {recommended ? <span className="badge tone-good">Most practical</span> : p.weakestDaily <= 1 ? <span className="badge tone-caution">Once daily</span> : null}
+    <div className={`card pad ${recommended ? "accent-sun" : ""}`}>
+      <div className="between" style={{ alignItems: "flex-start" }}>
+        <h3 className="h3">{p.via ? `Connect in ${getAirport(p.via)?.city}` : "Nonstop"}</h3>
+        {recommended ? <span className="badge sun plain">Most practical</span> : p.weakestDaily <= 1 ? <span className="badge tone-caution">Once daily</span> : null}
       </div>
-      <div style={{ marginTop: 26 }}>
+      <div style={{ marginTop: 28 }}>
         <RouteDiagram origin={p.origin} via={p.via} destination={p.destination} legDaily={p.legDaily} />
       </div>
-      <div className="row tiny" style={{ marginTop: 14, gap: 14, flexWrap: "wrap" }}>
-        <span>
-          <Icon name="clock" size={13} /> {formatDuration(p.typicalMin)} best total
-        </span>
-        <span>{sameDay.length} same-day option{sameDay.length === 1 ? "" : "s"}</span>
-        {p.basis === "live" ? (
-          <Prov kind="live" label="Live schedule" />
-        ) : p.basis === "historical" ? (
-          <Prov kind="historical" label={`As flown · ${history?.observedLabel(monthOf(p.options[0]!.legs[0]!.depLocal.date)) ?? "BTS"}`} />
-        ) : (
-          <Prov kind="estimate" label={p.options.some((o) => o.legs.some((l) => l.basis !== "estimate")) ? "Partly estimated" : "Estimated times"} />
-        )}
+      <div className="stats">
+        <div>
+          <div className="stat-k">Best total</div>
+          <div className="stat-v">{formatDuration(p.typicalMin)}</div>
+        </div>
+        <div>
+          <div className="stat-k">Same-day</div>
+          <div className="stat-v">
+            {sameDay.length} <span className="small">option{sameDay.length === 1 ? "" : "s"}</span>
+          </div>
+        </div>
+        <div>
+          <div className="stat-k">Last try</div>
+          <div className="stat-v">{last ? `${last.legs[0]!.basis === "estimate" ? "~" : ""}${formatTime(last.legs[0]!.depLocal.time)}` : "—"}</div>
+        </div>
       </div>
-      <div className="slots" style={{ marginTop: 10 }}>
+      <div className="slots" style={{ marginTop: 14 }} aria-label="Departures">
         {p.options.map((o, i) => (
           <SlotChip key={o.id} it={o} first={i === 0} last={o === last} />
         ))}
       </div>
-      {last && (
+      <div className="slot-legend">
+        <span>
+          <i style={{ background: "var(--good)" }} />
+          First
+        </span>
+        <span>
+          <i style={{ background: "var(--warn)" }} />
+          Last same-day
+        </span>
+        <span style={{ marginLeft: "auto" }}>
+          {p.basis === "live" ? (
+            <Prov kind="live" label="Live schedule" />
+          ) : p.basis === "historical" ? (
+            <Prov kind="historical" label={`As flown · ${history?.observedLabel(monthOf(p.options[0]!.legs[0]!.depLocal.date)) ?? "BTS"}`} />
+          ) : (
+            <Prov kind="estimate" label={p.options.some((o) => o.legs.some((l) => l.basis !== "estimate")) ? "Partly estimated" : "Estimated times"} />
+          )}
+        </span>
+      </div>
+      {last && (last.arrivesLaterDay || p.overnightRisk) && (
         <p className="tiny" style={{ margin: "8px 0 0" }}>
-          Last realistic same-day attempt around <strong>{formatTime(last.legs[0]!.depLocal.time)}</strong>
-          {last.arrivesLaterDay ? " (arrives next day)" : ""}.
-          {p.overnightRisk ? " Later departures may mean a night at the hub." : ""}
+          {last.arrivesLaterDay ? "The last same-day attempt arrives the next day." : ""}
+          {p.overnightRisk ? `${last.arrivesLaterDay ? " " : ""}Later departures may mean a night at the hub.` : ""}
         </p>
       )}
       <ul className="list-plain" style={{ marginTop: 10 }}>
@@ -626,35 +706,44 @@ function PathCard({ p, recommended, history, loads }: { p: PathSummary; recommen
           </li>
         ))}
       </ul>
-      <LoadLines p={p} loads={loads} />
-      {reliability.length > 0 && (
-        <div className="tiny" style={{ marginTop: 8 }}>
-          {reliability.map(({ f, t, r }) => (
-            <div key={`${f}${t}`}>
-              {f}→{t}: {r!.late15}% arrived 15+ min late, {r!.cancel}% cancelled ({r!.n.toLocaleString()} flights, BTS)
-            </div>
-          ))}
-        </div>
+      {(loadRows.length > 0 || reliability.length > 0) && (
+        <details className="disclosure" style={{ marginTop: 6, borderTop: "1px dashed var(--line-2)", paddingTop: 4 }}>
+          <summary className="between" style={{ minHeight: 40 }}>
+            <span className="small strong">How full & how on-time</span>
+            <Icon name="chevronDown" size={16} />
+          </summary>
+          <ul className="list-plain">
+            {loadRows.map(({ l, load }) => (
+              <li key={`l${l.from}${l.to}`} className="tiny">
+                <strong className="num" style={{ color: "var(--ink)" }}>
+                  {l.from}→{l.to}
+                </strong>{" "}
+                {LOAD_BAND_LABEL[loadBand(load.loadFactor)].toLowerCase()} — averaged <span className="num">{Math.round(load.loadFactor)}%</span> full in {loads!.label(load)} (BTS T-100, historical average, not today’s open seats)
+              </li>
+            ))}
+            {reliability.map(({ f, t, r }) => (
+              <li key={`r${f}${t}`} className="tiny">
+                <strong className="num" style={{ color: "var(--ink)" }}>
+                  {f}→{t}
+                </strong>{" "}
+                <span className="num">{r!.late15}%</span> arrived 15+ min late, <span className="num">{r!.cancel}%</span> cancelled ({r!.n.toLocaleString()} flights, BTS)
+              </li>
+            ))}
+          </ul>
+        </details>
       )}
     </div>
   );
 }
 
 /** Historical load factor per leg — explicitly an average from last year, not open seats. */
-function LoadLines({ p, loads }: { p: PathSummary; loads?: FlightLoads }) {
+function routeLoads(p: PathSummary, loads?: FlightLoads) {
   const sample = p.options[0];
-  if (!loads || !sample) return null;
-  const rows = sample.legs.map((l) => ({ l, load: loads.route(l.from, l.to, monthOf(l.depLocal.date)) })).filter((x) => x.load);
-  if (!rows.length) return null;
-  return (
-    <div className="tiny" style={{ marginTop: 8 }}>
-      {rows.map(({ l, load }) => (
-        <div key={`${l.from}${l.to}`}>
-          {l.from}→{l.to}: {LOAD_BAND_LABEL[loadBand(load!.loadFactor)].toLowerCase()} — averaged {Math.round(load!.loadFactor)}% full in {loads.label(load!)} (BTS T-100, historical average, not today’s open seats)
-        </div>
-      ))}
-    </div>
-  );
+  if (!loads || !sample) return [];
+  return sample.legs.flatMap((l) => {
+    const load = loads.route(l.from, l.to, monthOf(l.depLocal.date));
+    return load ? [{ l, load }] : [];
+  });
 }
 
 function SlotChip({ it, first, last }: { it: Itinerary; first: boolean; last: boolean }) {
@@ -671,7 +760,7 @@ function SlotChip({ it, first, last }: { it: Itinerary; first: boolean; last: bo
     <span className={`slot ${first ? "first" : ""} ${last ? "last" : ""}`} title={title}>
       {leg.basis === "estimate" ? "~" : ""}
       {t}
-      {leg.flight ? <span style={{ fontWeight: 500, opacity: 0.75 }}> {leg.flight.replace(" ", "")}</span> : null}
+      {leg.flight ? <span className="fn"> {leg.flight.replace(" ", "")}</span> : null}
       {leg.status === "delayed" ? " ⚠︎" : ""}
       {it.overnightConnection ? " ☾" : ""}
     </span>
@@ -691,7 +780,7 @@ const FALLBACK_ICON: Record<FallbackKind, IconName> = {
 };
 
 function FallbackList({ items }: { items: FallbackOption[] }) {
-  if (!items.length) return <p className="small">No alternatives found in the reference network.</p>;
+  if (!items.length) return <p className="small" style={{ margin: 0 }}>No alternatives found in the reference network.</p>;
   return (
     <div>
       {items.map((f) => (
@@ -700,7 +789,7 @@ function FallbackList({ items }: { items: FallbackOption[] }) {
             <Icon name={FALLBACK_ICON[f.kind]} size={18} />
           </span>
           <div>
-            <div style={{ fontWeight: 650 }}>{f.title}</div>
+            <div className="fallback-title">{f.title}</div>
             <div className="small" style={{ marginTop: 2 }}>
               {f.detail}
             </div>
@@ -722,17 +811,13 @@ function BackupsTab({ plan, fares }: { plan: TripPlan; fares: FareQueries }) {
       <p className="small" style={{ margin: 0 }}>
         Ranked by how practical they are on the day — more remaining attempts and fewer moving parts rank higher.
       </p>
-      <section className="card" style={{ padding: 16 }}>
-        <h2 className="h2" style={{ fontSize: 20, marginBottom: 10 }}>
-          Getting there
-        </h2>
+      <section className="card pad">
+        <SectionHead title="Getting there" aside={<span className="tiny num">{plan.outboundFallbacks.length} options</span>} />
         <FallbackList items={plan.outboundFallbacks} />
         <FareCard {...fares.out} />
       </section>
-      <section className="card" style={{ padding: 16 }}>
-        <h2 className="h2" style={{ fontSize: 20, marginBottom: 10 }}>
-          Getting home
-        </h2>
+      <section className="card pad">
+        <SectionHead title="Getting home" aside={<span className="tiny num">{plan.returnFallbacks.length} options</span>} />
         <FallbackList items={plan.returnFallbacks} />
         <FareCard {...fares.back} />
       </section>
@@ -749,34 +834,34 @@ function HomeTab({ plan, a, request, fares }: { plan: TripPlan; a: TripAssessmen
   const max = Math.max(1, ...rp.days.map((d) => d.attempts));
   return (
     <div className="stack-lg">
-      <section className="card" style={{ padding: 16 }}>
-        <div className="between">
+      <section className="card pad accent-ink">
+        <div className="between" style={{ alignItems: "flex-start", flexWrap: "wrap", rowGap: 8 }}>
           <div>
             <div className="eyebrow">Must be home by</div>
-            <div style={{ fontFamily: "var(--serif)", fontSize: 26, fontWeight: 600, marginTop: 2 }}>{request.homeBy ? formatDate(request.homeBy) : "No deadline"}</div>
+            <div className="figure" style={{ fontSize: 26 }}>
+              {request.homeBy ? formatDate(request.homeBy) : "No deadline"}
+            </div>
           </div>
           <DeadlineBadge risk={rp.deadlineRisk} />
         </div>
         <p style={{ margin: "12px 0 0", fontSize: 15 }}>{rp.advice}</p>
-        {!request.homeBy && <p className="tiny">Add a “must be home by” date on the search to see how many backups remain before it.</p>}
+        {!request.homeBy && <p className="tiny" style={{ margin: "8px 0 0" }}>Add a “must be home by” date on the search to see how many backups remain before it.</p>}
       </section>
 
       <section>
-        <h2 className="h2" style={{ fontSize: 20 }}>
-          Attempts home by day
-        </h2>
-        <p className="small" style={{ margin: "6px 0 12px" }}>
+        <SectionHead title="Attempts home by day" aside={<span className="tiny num">{rp.totalAttempts} total</span>} />
+        <p className="small" style={{ margin: "0 0 12px" }}>
           Approximate flights you could try for from {a.destAirports.join("/")} to {a.homeAirports.join("/")}
           {request.homeBy ? " that land by the end of your deadline day" : ""}.
         </p>
         <div className="bars">
           {rp.days.map((d) => (
-            <div key={d.date} className="bar-row">
-              <span className="mono">{formatShortDate(d.date)}{d.date === a.returnDate ? " ★" : ""}</span>
+            <div key={d.date} className={`bar-row ${d.date === a.returnDate ? "planned" : ""}`}>
+              <span className="num">{formatShortDate(d.date)}{d.date === a.returnDate ? " ★" : ""}</span>
               <span className="bar-track">
-                <span className="bar-fill" style={{ width: `${(d.attempts / max) * 100}%`, display: "block", background: d.date === a.returnDate ? "var(--ink)" : undefined }} />
+                <span className="bar-fill" style={{ width: `${(d.attempts / max) * 100}%`, display: "block" }} />
               </span>
-              <span className="mono" style={{ textAlign: "right", fontWeight: 650 }}>
+              <span className="num" style={{ textAlign: "right", fontWeight: 700 }}>
                 {d.attempts}
               </span>
             </div>
@@ -805,7 +890,7 @@ function HomeTab({ plan, a, request, fares }: { plan: TripPlan; a: TripAssessmen
           {rp.days.map((d) => (
             <li key={d.date} className="between">
               <span>{formatDate(d.date)}</span>
-              <span className="mono small">{d.last ? `~${formatTime(d.last.legs[0]!.depLocal.time)} ${d.last.origin}${d.last.via ? `→${d.last.via}` : ""}` : "None"}</span>
+              <span className="num small strong">{d.last ? `~${formatTime(d.last.legs[0]!.depLocal.time)} ${d.last.origin}${d.last.via ? `→${d.last.via}` : ""}` : "None"}</span>
             </li>
           ))}
         </ul>
@@ -815,7 +900,7 @@ function HomeTab({ plan, a, request, fares }: { plan: TripPlan; a: TripAssessmen
       </section>
 
       {plan.returnFallbacks.length > 0 && (
-        <section className="card" style={{ padding: 16 }}>
+        <section className="card pad">
           <h3 className="h3" style={{ marginBottom: 8 }}>
             If the return doesn’t clear
           </h3>
@@ -836,12 +921,10 @@ function EvidenceTab({ a, airlineName, climate, history, loads, live, fares }: {
   const fareBack = useFare(fares.back.from, fares.back.to, fares.back.date, fares.back.airline);
   return (
     <div className="stack-lg">
-      <section className="card" style={{ padding: 16 }}>
-        <div className="between">
-          <h2 className="h2" style={{ fontSize: 20 }}>
-            Why “{TIER_COPY[a.tier].label}”
-          </h2>
-        </div>
+      <section className="card pad">
+        <h2 className="h2" style={{ fontSize: 20 }}>
+          Why “{TIER_COPY[a.tier].label}”
+        </h2>
         <p className="small" style={{ margin: "6px 0 4px" }}>
           A qualitative assessment built from the factors below. It is not a probability of clearing standby — STANDBY has no validated outcome data to support one.
         </p>
@@ -958,18 +1041,18 @@ function FactorRow({ f }: { f: Factor }) {
 
 function NoOptions({ destination, comparison, query }: { destination: Destination; comparison: NonNullable<ReturnType<typeof compareDates>>; query: string }) {
   return (
-    <div className="stack" style={{ marginTop: 20 }}>
-      <div className="panel">
-        <h2 className="h2" style={{ fontSize: 20 }}>
-          No workable dates in this window
-        </h2>
-        <p className="small">
-          {comparison.excluded[0]?.reason ?? `We couldn't find ${destination.name} service for your search.`} Try a wider window, allowing a connection, or a later deadline.
-        </p>
-        <Link className="btn" href={`/?${query}`}>
-          Adjust search
-        </Link>
-      </div>
+    <div style={{ marginTop: 20 }}>
+      <EmptyState
+        icon="calendar"
+        title="No workable dates in this window"
+        action={
+          <Link className="btn" href={`/?${query}`}>
+            Adjust search
+          </Link>
+        }
+      >
+        {comparison.excluded[0]?.reason ?? `We couldn't find ${destination.name} service for your search.`} Try a wider window, allowing a connection, or a later deadline.
+      </EmptyState>
     </div>
   );
 }

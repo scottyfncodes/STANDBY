@@ -23,7 +23,7 @@ export default function HowItWorks() {
       <main className="page narrow">
         <section className="hero">
           <p className="eyebrow">How it works</p>
-          <h1 className="display" style={{ fontSize: 40 }}>
+          <h1 className="display sm">
             Honest about what we know.
           </h1>
           <p className="lede">
@@ -32,7 +32,7 @@ export default function HowItWorks() {
         </section>
 
         <div className="stack-lg">
-          <section className="card" style={{ padding: 16 }}>
+          <section className="card pad">
             <h2 className="h2" style={{ fontSize: 20 }}>
               How trips are assessed
             </h2>
@@ -76,7 +76,7 @@ export default function HowItWorks() {
             </div>
           </section>
 
-          <section className="card" style={{ padding: 16 }}>
+          <section className="card pad">
             <h2 className="h2" style={{ fontSize: 20 }}>
               {americanAirlines.name} employee travel rules
             </h2>

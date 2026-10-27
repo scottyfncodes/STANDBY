@@ -14,7 +14,7 @@ import { Icon } from "./icons";
 import { useStore } from "./store";
 import { TopBar } from "./TopBar";
 import { TripSetup, validate } from "./TripSetup";
-import { Sheet } from "./ui";
+import { EmptyState, Sheet } from "./ui";
 
 const PAGE = 12;
 
@@ -22,9 +22,12 @@ function TripSummary({ request, onEdit }: { request: TripRequest; onEdit: () => 
   const scope = request.scope === "any" ? "Anywhere" : request.scope === "domestic" ? "Within the US" : "Abroad";
   const extras = request.climates.length + request.interests.length + (request.budget ? 1 : 0) + (request.complexity === "nonstop" ? 1 : 0);
   return (
-    <button type="button" className="card" onClick={onEdit} style={{ width: "100%", textAlign: "left", padding: "14px 16px", display: "grid", gridTemplateColumns: "1fr auto", gap: 12, alignItems: "center" }}>
+    <button type="button" className="card accent-sun" onClick={onEdit} style={{ width: "100%", textAlign: "left", padding: "14px 16px", display: "grid", gridTemplateColumns: "1fr auto", gap: 12, alignItems: "center" }}>
       <span style={{ minWidth: 0 }}>
-        <span style={{ display: "block", fontWeight: 700, fontSize: 17 }}>
+        <span className="eyebrow" style={{ display: "block", marginBottom: 2 }}>
+          Your trip
+        </span>
+        <span className="num" style={{ display: "block", fontWeight: 700, fontSize: 17 }}>
           {request.origins.join(" / ")} · {formatShortDate(request.windowStart)} – {formatShortDate(request.windowEnd)}
         </span>
         <span className="small" style={{ display: "block", marginTop: 2 }}>
@@ -130,10 +133,10 @@ export function DiscoverView() {
                 </Sheet>
               </>
             ) : (
-              <div className="skeleton" style={{ height: 120 }} />
+              <div className="skeleton" style={{ height: 96 }} />
             )}
             {errors.length > 0 && (
-              <div className="notice" role="alert" style={{ marginTop: 12, background: "var(--bad-bg)", color: "var(--bad)" }}>
+              <div className="notice bad" role="alert" style={{ marginTop: 12 }}>
                 <Icon name="alert" size={18} />
                 <div>{errors.map((e) => <div key={e}>{e}</div>)}</div>
               </div>
@@ -142,7 +145,10 @@ export function DiscoverView() {
 
           <section aria-live="polite" aria-busy={stale} style={{ marginTop: 24 }}>
             {!output && !errors.length && (
-              <div className="results">
+              <div className="results" aria-busy="true">
+                <span className="loading-note" role="status" style={{ gridColumn: "1 / -1" }}>
+                  Ranking destinations against schedules and flight history…
+                </span>
                 {[0, 1, 2].map((i) => (
                   <div key={i} className="skeleton" style={{ height: 330 }} />
                 ))}
@@ -150,7 +156,7 @@ export function DiscoverView() {
             )}
             {output && deferred && (
               <>
-                <div className="between" style={{ marginBottom: 12, alignItems: "flex-end" }}>
+                <div className="results-head">
                   <div>
                     <h2 className="h2">{output.results.length ? "Trips worth a look" : "Nothing fits yet"}</h2>
                     {output.results.length > 0 && (
@@ -159,7 +165,7 @@ export function DiscoverView() {
                       </p>
                     )}
                   </div>
-                  {stale && <span className="tiny">Updating…</span>}
+                  {stale && <span className="loading-note">Updating</span>}
                 </div>
 
                 <div className="notice" style={{ marginBottom: 16 }}>
@@ -171,9 +177,17 @@ export function DiscoverView() {
                 </div>
 
                 {output.results.length === 0 ? (
-                  <div className="panel">
-                    <p style={{ margin: 0 }}>No destinations match every filter for these dates. Try widening the window, allowing a connection, or clearing a weather preference.</p>
-                  </div>
+                  <EmptyState
+                    icon="compass"
+                    title="No destinations fit every filter"
+                    action={
+                      <button type="button" className="btn btn-ghost mobile-only" style={{ marginInline: "auto" }} onClick={() => setEditing(true)}>
+                        <Icon name="sliders" size={16} /> Adjust trip
+                      </button>
+                    }
+                  >
+                    Try widening the window, allowing a connection, or clearing a weather preference.
+                  </EmptyState>
                 ) : (
                   <div className="results" style={{ opacity: stale ? 0.55 : 1, transition: "opacity .2s" }}>
                     {output.results.slice(0, limit).map((r, i) => (
@@ -191,7 +205,9 @@ export function DiscoverView() {
                 {output.filtered.length > 0 && (
                   <details className="disclosure panel" style={{ marginTop: 20 }}>
                     <summary className="between">
-                      <span style={{ fontWeight: 650 }}>Not shown ({output.filtered.length})</span>
+                      <span style={{ fontWeight: 650 }}>
+                        Not shown <span className="num" style={{ color: "var(--muted)" }}>({output.filtered.length})</span>
+                      </span>
                       <Icon name="chevronDown" size={18} />
                     </summary>
                     <ul className="list-plain" style={{ marginTop: 10 }}>
