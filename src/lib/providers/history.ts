@@ -1,4 +1,5 @@
 import type { AirportCode, DataProvenance, ISODate, LocalTime } from "@/lib/domain/types";
+import { isDomestic } from "@/lib/data/airports";
 import { monthName, monthOf, weekday } from "@/lib/engine/time";
 
 /**
@@ -89,8 +90,14 @@ export function createHistory(file: HistoryFile): FlightHistory {
     day(from, to, date) {
       const r = file.routes[`${from}-${to}`];
       const month = monthOf(date);
-      // No history for this pair (e.g. a new or international route): fall back to reference data.
-      if (!r) return undefined;
+      if (!r) {
+        // A domestic pair that never appears in a complete 12-month record of AA-marketed flights
+        // (regional partners included) didn't operate last year. International pairs aren't in
+        // the on-time data at all, so they fall back to reference estimates.
+        const year = observedYear.get(month);
+        if (complete && year && isDomestic(from) && isDomestic(to)) return { times: [], blockMin: null, observed: { year, month } };
+        return undefined;
+      }
       const mo = r.m[String(month)];
       const year = mo?.y ?? observedYear.get(month);
       if (!mo) {

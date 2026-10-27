@@ -6,8 +6,8 @@ Last reviewed Oct 27, 2026. Provider prices change; confirm on the provider's si
 
 | Dataset | File | Source | Coverage | Freshness | Used for |
 | --- | --- | --- | --- | --- | --- |
-| On-time history | `public/data/aa-history.json` | BTS Airline On-Time Performance, **Marketing Carrier** file (PREZIP monthly zips) | US domestic incl. PR/USVI; flights marketed as AA, incl. AA-branded regionals | ~2–3 month lag; window Jun 2025 – May 2026 | Scheduled departure times by month and weekday, operating span (seasonal start/end), block time, cancellation and late-arrival rates |
-| Load factors | `public/data/aa-loads.json` | BTS **T-100 Segment (All Carriers)**, TranStats table FMG, download form | Domestic **and** international nonstop segments operated by AA, MQ (Envoy), OH (PSA), PT (Piedmont) | ~3 month lag; TranStats reported data through Jul 2026 | Monthly passengers ÷ seats as historical context |
+| On-time history | `public/data/aa-history.json` | BTS Airline On-Time Performance, **Marketing Carrier** file (PREZIP monthly zips) | US domestic incl. PR/USVI; flights marketed as AA, incl. AA-branded regionals: 814 directional routes | ~5 month lag; Jun 2025 – May 2026 | Scheduled departure times by month and weekday, operating span (seasonal start/end), block time, cancellation and late-arrival rates |
+| Load factors | `public/data/aa-loads.json` | BTS **T-100 Segment (All Carriers)**, TranStats table FMG, download form | Domestic **and** international nonstop segments operated by AA, MQ (Envoy), OH (PSA), PT (Piedmont): 949 directional routes, 80 international | ~3 month lag; Aug 2025 – Jul 2026 | Monthly passengers ÷ seats as historical context |
 | Reference network | `src/lib/data/aa-network.ts` | Compiled approximations | AA network incl. international | Static (Oct 2026) | Fallback when no history exists (international routes, new routes) |
 | Climate | `/api/climate` | Open-Meteo archive | Global | Live, cached 30 days | Weather by month |
 
@@ -31,7 +31,10 @@ All BTS data is US government work in the public domain. Open-Meteo is CC BY 4.0
 - **Rows with zero seats or zero departures** (cargo-only or non-revenue movements) are dropped.
 - **Missing on-time arrival delay values** are excluded from lateness percentages. Scheduled time `2400` is kept as 23:59 on its flight date.
 - **On-time history covers US domestic only.** International times remain reference estimates and are labeled "Estimated".
-- **Routes absent from the history** fall back to reference data. Absence is only treated as "didn't operate" for months where the route has history and every month came from the marketing-carrier file, which includes regional partners.
+- **Absence counts as evidence for domestic pairs only.** A domestic pair that never appears in a complete 12-month marketing-carrier record (regional partners included) is treated as not operated.
+  - 23 hand-compiled reference routes fall out this way, e.g. CLT–HNL, ORD–OGG, CLT/LAX/MIA/LGA–HDN, PHL–BZN, SAN–JFK.
+  - Tradeoff: a domestic route launched after the data window won't appear until the next refresh.
+  - International pairs aren't in the on-time data, so they keep reference estimates.
 
 ## How STANDBY presents historical data
 

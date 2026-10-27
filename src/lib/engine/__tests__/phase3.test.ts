@@ -132,3 +132,17 @@ describe("load factors in assessments", () => {
     expect(t.detail).toMatch(/historical context/);
   });
 });
+
+describe("real BTS data: seasonal start", () => {
+  it("has no Steamboat service before last year's mid-December start, and service after", async () => {
+    const { readFileSync } = await import("node:fs");
+    const history = createHistory(JSON.parse(readFileSync("public/data/aa-history.json", "utf8")));
+    const engine = new ItineraryEngine(americanAirlines, history);
+    const request = { ...defaultRequest("2026-12-01", "DFW"), nights: 4, allowAlternateDestinations: false };
+    const before = assessTrip({ airline: americanAirlines, engine, request, party, destination: getDestination("steamboat")!, outboundDate: "2026-12-10" });
+    const after = assessTrip({ airline: americanAirlines, engine, request, party, destination: getDestination("steamboat")!, outboundDate: "2026-12-21" });
+    expect(before.tier).toBe("unavailable");
+    expect(after.tier).not.toBe("unavailable");
+    expect(after.outbound.itineraries.some((i) => i.legs.length === 1 && i.basis === "historical")).toBe(true);
+  });
+});

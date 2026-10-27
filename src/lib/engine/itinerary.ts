@@ -129,12 +129,13 @@ export class ItineraryEngine {
       // Without regional-partner coverage, an empty day isn't evidence the route didn't fly.
       if (hist && !hist.times.length && !this.history?.complete) hist = undefined;
       const blockMin = hist?.blockMin ?? this.airline.network.routeAnyMonth(from, to)?.blockMin;
-      const plan: { times: LocalTime[]; basis: Departure["basis"] } | undefined = hist && blockMin
+      // History showing no service is evidence too; it needs no block time to say "no flights".
+      const plan: { times: LocalTime[]; basis: Departure["basis"] } | undefined = hist && (blockMin || !hist.times.length)
         ? { times: hist.times, basis: "historical" }
         : route
           ? { times: representativeSlots(from, to, route.daily), basis: "estimate" }
           : undefined;
-      if (plan && blockMin) {
+      if (plan && plan.times.length && blockMin) {
         out = plan.times.map((time) => {
           const depUtc = zonedToUtc(date, time, fa.tz);
           const arrUtc = depUtc + blockMin * 60_000;
