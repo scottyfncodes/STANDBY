@@ -213,16 +213,17 @@ export function assessTrip(input: AssessInput): TripAssessment {
     basis: partyA.prioritiesKnown ? "user" : "unavailable",
   });
 
-  const hasNonstop = outbound.nonstopCount > 0 && inbound.nonstopCount > 0;
+  // Judge connections at the primary airport; a nonstop to an alternate airport isn't the trip.
+  const hasNonstop = outPrimary.nonstopCount > 0 && inPrimary.nonstopCount > 0;
   // Misconnect evidence for the most practical connecting path, when history is available.
-  const bestConn = hasNonstop ? undefined : [...summarizePaths(outbound), ...summarizePaths(inbound)].find((p) => p.via && p.connectionRisk)?.connectionRisk;
-  const connScore = hasNonstop ? 1 : (outbound.hubs.length >= 2 ? 0.6 : 0.4) - (bestConn ? Math.min(bestConn.lateShare, 40) / 200 : 0);
+  const bestConn = hasNonstop ? undefined : [...summarizePaths(outPrimary), ...summarizePaths(inPrimary)].find((p) => p.via && p.connectionRisk)?.connectionRisk;
+  const connScore = hasNonstop ? 1 : (outPrimary.hubs.length >= 2 ? 0.6 : 0.4) - (bestConn ? Math.min(bestConn.lateShare, 40) / 200 : 0);
   add({
     key: "connections",
     label: "Connections",
     detail: hasNonstop
       ? "Nonstop service both ways — no connection to misconnect or get stranded at."
-      : `Requires a connection${outbound.hubs.length ? ` (${outbound.hubs.slice(0, 3).join(", ")})` : ""}; each one is another standby list.${
+      : `${primaryDest} needs a connection${outPrimary.hubs.length ? ` (${outPrimary.hubs.slice(0, 3).join(", ")})` : ""}; each one is another standby list.${
           bestConn ? ` Historically ${bestConn.lateShare}% of first legs arrived ${bestConn.thresholdMin}+ min late.` : ""
         }`,
     score: Math.max(0.1, connScore),
@@ -238,7 +239,7 @@ export function assessTrip(input: AssessInput): TripAssessment {
   if (inbound.depth <= 1 && (slackDays ?? 1) === 0) tier = "high-risk";
   if (tier === "high-risk") rank = Math.min(rank, 0.45);
 
-  const risks = collectRisks({ outbound, inbound, slackDays, weakest, demandOut, demandBack, partyA });
+  const risks = collectRisks({ outbound, inbound, outPrimary, inPrimary, slackDays, weakest, demandOut, demandBack, partyA });
   const top = factors.filter((f) => f.impact === "helps").sort((a, b) => b.score * b.weight - a.score * a.weight)[0];
   const low = factors.filter((f) => f.impact === "hurts").sort((a, b) => a.score * a.weight - b.score * b.weight)[0];
   const headline = [top?.detail, low ? `Watch: ${low.detail.charAt(0).toLowerCase()}${low.detail.slice(1)}` : undefined].filter(Boolean).join(" ");
@@ -254,6 +255,8 @@ function worse(a: Tier, b: Tier): Tier {
 function collectRisks(x: {
   outbound: DayOptions;
   inbound: DayOptions;
+  outPrimary: DayOptions;
+  inPrimary: DayOptions;
   slackDays: number | null;
   weakest: number;
   demandOut: DemandAssessment;
@@ -270,7 +273,7 @@ function collectRisks(x: {
   };
   if (x.inbound.depth <= 2) risks.push("Very few flights home on return day — the last flight of the day is a real cliff.");
   if (x.slackDays === 0) risks.push("No buffer: if the return doesn't clear, you miss your deadline.");
-  if ((reliesOnConnections(x.outbound) && x.outbound.overnightExposure) || (reliesOnConnections(x.inbound) && x.inbound.overnightExposure))
+  if ((reliesOnConnections(x.outPrimary) && x.outPrimary.overnightExposure) || (reliesOnConnections(x.inPrimary) && x.inPrimary.overnightExposure))
     risks.push("Late connections can leave you overnight at a hub if you don't clear the second flight.");
   if (mostlyOvernight(x.outbound) || mostlyOvernight(x.inbound)) risks.push("Overnight or long-haul flights — a missed departure often means waiting until the next day's flight.");
   if (x.weakest <= 1 && x.inbound.depth > 2) risks.push("The best routing includes a once-a-day flight.");

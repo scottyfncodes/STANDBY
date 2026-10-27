@@ -225,8 +225,14 @@ export function buildPlan(args: {
 }): TripPlan {
   const { engine, assessment: a, destination, request } = args;
   const allowConn = request.complexity !== "nonstop";
-  const outboundPaths = summarizePaths(a.outbound);
-  const returnPaths = summarizePaths(a.inbound);
+  // Routings to/from the primary destination airport come first; alternates are backups.
+  const primaryDest = a.destAirports[0];
+  const primaryFirst = (paths: PathSummary[], end: "origin" | "destination") => [
+    ...paths.filter((p) => p[end] === primaryDest && sameDay(p).length),
+    ...paths.filter((p) => !(p[end] === primaryDest && sameDay(p).length)),
+  ];
+  const outboundPaths = primaryFirst(summarizePaths(a.outbound), "destination");
+  const returnPaths = primaryFirst(summarizePaths(a.inbound), "origin");
   const primaryOrigin = request.origins[0];
   const primaryOut = outboundPaths.find((p) => p.origin === primaryOrigin && sameDay(p).length) ?? outboundPaths.find((p) => sameDay(p).length);
   const primaryBack = returnPaths.find((p) => p.destination === primaryOut?.origin && sameDay(p).length) ?? returnPaths.find((p) => sameDay(p).length);

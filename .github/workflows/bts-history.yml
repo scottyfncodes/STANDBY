@@ -7,7 +7,7 @@ on:
   # reviewed in a PR before it ever reaches main.
   push:
     branches-ignore: [main]
-    paths: [scripts/bts/**, .github/workflows/bts-history.yml]
+    paths: [scripts/bts/**]
   workflow_dispatch:
     inputs:
       branch:
@@ -47,4 +47,6 @@ jobs:
           if git diff --cached --quiet; then echo "No changes"; exit 0; fi
           ls -la public/data/aa-history.json
           git commit -m "Refresh BTS flight history"
+          # Another push may have landed while this ran; replay the data commit on top.
+          git pull --rebase origin ${{ inputs.branch || github.ref_name }}
           git push origin HEAD:${{ inputs.branch || github.ref_name }}

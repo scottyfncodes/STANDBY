@@ -137,3 +137,28 @@ describe("flight-data layer", () => {
     expect(!res.ok && res.reason).toBe("not_implemented");
   });
 });
+
+describe("primary destination airport", () => {
+  it("plans Plan A into the primary airport and keeps alternates as backups", async () => {
+    const { buildPlan } = await import("../plan");
+    const engine = new ItineraryEngine(americanAirlines);
+    const request = { ...defaultRequest("2026-11-01", "AUS"), nights: 4, homeBy: "2026-11-18" };
+    const destination = getDestination("key-west")!;
+    const a = assessTrip({ airline: americanAirlines, engine, request, party: { airline: "AA", mustTravelTogether: true, travelers: [] }, destination, outboundDate: "2026-11-11" });
+    const plan = buildPlan({ engine, assessment: a, destination, request, allOrigins: a.origins });
+    expect(plan.primaryOut!.destination).toBe("EYW");
+    expect(plan.primaryBack!.origin).toBe("EYW");
+    expect(plan.outboundFallbacks.some((f) => f.kind === "alt-destination")).toBe(true);
+  });
+});
+
+describe("connections factor", () => {
+  it("doesn't credit a nonstop to an alternate airport as a nonstop trip", () => {
+    const engine = new ItineraryEngine(americanAirlines);
+    const request = { ...defaultRequest("2026-11-01", "AUS"), nights: 4 };
+    const a = assessTrip({ airline: americanAirlines, engine, request, party: { airline: "AA", mustTravelTogether: true, travelers: [] }, destination: getDestination("key-west")!, outboundDate: "2026-11-11" });
+    const f = a.factors.find((x) => x.key === "connections")!;
+    expect(f.detail).toMatch(/^EYW needs a connection/);
+    expect(f.score).toBeLessThan(1);
+  });
+});
